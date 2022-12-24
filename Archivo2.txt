@@ -1,0 +1,12 @@
+Hola
+perro
+gato
+mono
+chimpanse
+1
+2
+3
+ñ
+kk
+po
+nn
