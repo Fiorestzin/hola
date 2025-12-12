@@ -10,18 +10,4 @@ services:
         value: PROD
       - key: PYTHON_VERSION
         value: 3.11.0
-    disk:
-      name: finance-data
-      mountPath: /data
-      sizeGB: 1
     rootDir: app/backend
-
-staticSites:
-  # Frontend Static Site
-  - name: finanzas-web
-    buildCommand: npm install && npm run build
-    publishPath: ./dist
-    envVars:
-      - key: VITE_API_URL
-        value: https://finanzas-api.onrender.com
-    rootDir: app/frontend
