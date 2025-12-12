@@ -1,0 +1,759 @@
+from fastapi import FastAPI, HTTPException, UploadFile, File, Response, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel
+import sqlite3
+import pandas as pd
+from datetime import datetime, timedelta
+import io
+import os
+from jose import JWTError, jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from typing import Optional
+
+# --- AUTH CONFIG ---
+SECRET_KEY = "fiorestzin-super-secret-key-change-in-prod"  # Change this in production!
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+ph = PasswordHasher()
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+app = FastAPI()
+
+# Enable CORS so the frontend (port 5173) can talk to backend (port 8000)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production we would restrict this
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- CONFIGURATION & ENV ---
+# --- CONFIGURATION & ENV ---
+class GlobalConfig:
+    ENV = os.getenv("FINANCE_ENV", "TEST").upper()
+    DB_FILENAME = "finance_prod.db" if ENV == "PROD" else "finance_test.db"
+
+config = GlobalConfig()
+
+def update_db_path():
+    config.DB_FILENAME = "finance_prod.db" if config.ENV == "PROD" else "finance_test.db"
+    print(f"SWITCHED TO: {config.ENV} ({config.DB_FILENAME})")
+
+DB_PATH = os.path.join(os.path.dirname(__file__), config.DB_FILENAME) # Initial path
+
+def get_db_path():
+    return os.path.join(os.path.dirname(__file__), config.DB_FILENAME)
+
+print(f"\nSTARTING FINANCE BACKEND")
+print(f"ENVIRONMENT: {config.ENV}")
+print(f"DATABASE:    {config.DB_FILENAME}\n")
+
+def get_db_connection():
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row # Access columns by name
+    return conn
+    
+class ConfigUpdate(BaseModel):
+    env: str
+
+class ResetRequest(BaseModel):
+    confirmation: str
+
+@app.get("/config")
+def get_config():
+    return {"env": config.ENV, "db": config.DB_FILENAME}
+
+@app.post("/config/switch")
+def switch_env(update: ConfigUpdate):
+    if update.env not in ["TEST", "PROD"]:
+        raise HTTPException(status_code=400, detail="Invalid environment. Use TEST or PROD.")
+    
+    config.ENV = update.env
+    update_db_path()
+    
+    # Ensure DB exists/init if switching to new one
+    try:
+        init_db()
+    except:
+        pass # Might fail if table already exists, init_db is safe
+        
+    return {"status": "ok", "env": config.ENV, "db": config.DB_FILENAME}
+
+@app.post("/config/reset")
+def reset_db_data(req: ResetRequest):
+    if req.confirmation != "fiorestzin":
+        raise HTTPException(status_code=403, detail="Frase de confirmación incorrecta.")
+        
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        # Dangerous part: Delete all user data
+        cursor.execute("DELETE FROM transactions")
+        cursor.execute("DELETE FROM budgets")
+        # We do NOT delete categories to preserve configuration
+        conn.commit()
+        return {"status": "ok", "message": "Datos eliminados correctamente (Fábrica)."}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+# --- AUTH HELPER FUNCTIONS ---
+def verify_password(plain_password, hashed_password):
+    try:
+        ph.verify(hashed_password, plain_password)
+        return True
+    except VerifyMismatchError:
+        return False
+
+def get_user(username: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+    user = cursor.fetchone()
+    conn.close()
+    return user
+
+def authenticate_user(username: str, password: str):
+    user = get_user(username)
+    if not user:
+        return False
+    if not verify_password(password, user["hashed_password"]):
+        return False
+    return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    user = get_user(username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+
+@app.post("/token", response_model=Token)
+def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Usuario o contraseña incorrectos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/me")
+async def read_users_me(current_user = Depends(get_current_user)):
+    return {"username": current_user["username"], "is_admin": current_user["is_admin"]}
+
+@app.get("/")
+def read_root():
+    return {"message": "Finance API is running"}
+
+@app.get("/transactions")
+def get_transactions(
+    limit: int = 100, 
+    start_date: str = None, 
+    end_date: str = None, 
+    category: str = None, 
+    bank: str = None,
+    detalle: str = None
+):
+    conn = get_db_connection()
+    
+    # ... (skipping the commented out old code for brevity if possible, or just rewriting clean)
+    
+    real_query = "SELECT * FROM transactions WHERE 1=1"
+    real_params = []
+    
+    if start_date:
+        real_query += " AND fecha >= ?"
+        real_params.append(start_date)
+    if end_date:
+        real_query += " AND fecha <= ?"
+        real_params.append(end_date)
+    if category:
+        real_query += " AND categoria = ?"
+        real_params.append(category)
+    if bank:
+        real_query += " AND banco = ?"
+        real_params.append(bank)
+    if detalle:
+        real_query += " AND detalle = ?"
+        real_params.append(detalle)
+        
+    real_query += " ORDER BY fecha DESC, rowid DESC"
+    
+    if limit > 0:
+        real_query += " LIMIT ?"
+        real_params.append(limit)
+
+    t = conn.execute(real_query, real_params).fetchall()
+    conn.close()
+    return [dict(row) for row in t]
+
+@app.get("/summary/banks")
+def get_bank_balances():
+    conn = get_db_connection()
+    # Calculate balance: Sum(Ingreso) - Sum(Gasto) grouped by Bank
+    query = '''
+        SELECT 
+            banco, 
+            SUM(ingreso) as total_ingreso, 
+            SUM(gasto) as total_gasto,
+            (SUM(ingreso) - SUM(gasto)) as saldo
+        FROM transactions 
+        WHERE banco IS NOT NULL AND banco != 'None' AND banco != 'nan'
+        GROUP BY banco
+        ORDER BY saldo DESC
+    '''
+    rows = conn.execute(query).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+@app.get("/reports")
+def get_reports(start_date: str = None, end_date: str = None):
+    conn = get_db_connection()
+    
+    # Base filter
+    where_clause = "1=1"
+    params = []
+    if start_date:
+        where_clause += " AND fecha >= ?"
+        params.append(start_date)
+    if end_date:
+        where_clause += " AND fecha <= ?"
+        params.append(end_date)
+
+    # 1. Category Breakdown (Pie Chart) - ONLY Expenses for now
+    cat_query = f'''
+        SELECT categoria as name, SUM(gasto) as value
+        FROM transactions 
+        WHERE {where_clause} AND gasto > 0
+        GROUP BY categoria
+        ORDER BY value DESC
+    '''
+    cat_data = conn.execute(cat_query, params).fetchall()
+
+    # 2. Monthly History (Bar Chart)
+    # We need to extract month from fecha. 
+    # Assuming fecha is YYYY-MM-DD or similar standard for sorting to work best, 
+    # but since data is messy, we might need python processing if SQL fails.
+    # SQLite has strftime but text dates must be formatted correctly.
+    # Let's try basic substr if format is YYYY-MM-DD, otherwise raw pandas.
+    
+    hist_query = f"SELECT fecha, ingreso, gasto FROM transactions WHERE {where_clause}"
+    df = pd.read_sql_query(hist_query, conn, params=params)
+    
+    history_data = []
+    if not df.empty:
+        try:
+            df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False) # standard ISO preference
+            df['month'] = df['dt'].dt.strftime('%Y-%m')
+            # Fallback for weird dates
+            df['month'] = df['month'].fillna('Desconocido')
+            
+            grp = df.groupby('month')[['ingreso', 'gasto']].sum().reset_index()
+            history_data = grp.sort_values('month').to_dict(orient='records')
+        except:
+            pass
+
+    conn.close()
+    
+    return {
+        "pie_data": [dict(row) for row in cat_data],
+        "bar_data": history_data
+    }
+
+@app.get("/analysis")
+def get_analysis(start_date: str = None, end_date: str = None):
+    conn = get_db_connection()
+    
+    where_clause = "1=1"
+    params = []
+    if start_date:
+        where_clause += " AND fecha >= ?"
+        params.append(start_date)
+    if end_date:
+        where_clause += " AND fecha <= ?"
+        params.append(end_date)
+        
+    # 1. Top 10 Specific Items (by Detalle)
+    top_items_query = f'''
+        SELECT detalle as name, SUM(gasto) as value 
+        FROM transactions 
+        WHERE {where_clause} AND gasto > 0
+        GROUP BY detalle
+        ORDER BY value DESC
+        LIMIT 10
+    '''
+    top_items = conn.execute(top_items_query, params).fetchall()
+    
+    # 2. Payment Methods (by Banco)
+    # We treat 'Banco' as the proxy for payment method/source
+    payment_methods_query = f'''
+        SELECT banco as name, SUM(gasto) as value
+        FROM transactions
+        WHERE {where_clause} AND gasto > 0 AND banco IS NOT NULL AND banco != 'None'
+        GROUP BY banco
+        ORDER BY value DESC
+    '''
+    payment_methods = conn.execute(payment_methods_query, params).fetchall()
+    
+    conn.close()
+    
+    return {
+        "top_expenses": [dict(row) for row in top_items],
+        "payment_methods": [dict(row) for row in payment_methods]
+    }
+
+@app.get("/history")
+def get_history(
+    start_date: str = None, 
+    end_date: str = None,
+    filter_col: str = 'detalle', # detalle, categoria, banco
+    filter_val: str = None
+):
+    conn = get_db_connection()
+    
+    # Validate column to prevent injection (though params handle values)
+    if filter_col not in ['detalle', 'categoria', 'banco']:
+        raise HTTPException(status_code=400, detail="Invalid filter column")
+
+    where_clause = "1=1"
+    params = []
+    
+    if start_date:
+        where_clause += " AND fecha >= ?"
+        params.append(start_date)
+    if end_date:
+        where_clause += " AND fecha <= ?"
+        params.append(end_date)
+        
+    if filter_val:
+        where_clause += f" AND {filter_col} = ?"
+        params.append(filter_val)
+
+    # We want monthly evolution of expenses for this specific item/category
+    # Reuse the logic for extraction of YYYY-MM
+    df = pd.read_sql_query(f"SELECT fecha, gasto FROM transactions WHERE {where_clause} AND gasto > 0", conn, params=params)
+    
+    history_data = []
+    if not df.empty:
+        try:
+            df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False)
+            df['month'] = df['dt'].dt.strftime('%Y-%m')
+             # Fallback
+            df['month'] = df['month'].fillna('Desconocido')
+            
+            grp = df.groupby('month')['gasto'].sum().reset_index()
+            history_data = grp.sort_values('month').to_dict(orient='records')
+        except:
+             pass
+
+    conn.close()
+    return history_data
+
+class Transaction(BaseModel):
+    fecha: str
+    tipo: str
+    categoria: str
+    detalle: str
+    banco: str
+    monto: float # We receive a single amount and split it based on type
+
+@app.post("/transaction")
+def create_transaction(tx: Transaction):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    ingreso = 0
+    gasto = 0
+    
+    # Simple logic: positive amount = Ingreso, negative amount or type 'Gasto' = Gasto?
+    # Let's rely on 'tipo' sent from frontend which is clearer
+    if tx.tipo == 'Ingreso':
+        ingreso = tx.monto
+    else:
+        gasto = tx.monto
+        
+    try:
+        print(f"DEBUG TRYING INSERT: {tx.fecha}, {tx.tipo}, {tx.categoria}, {tx.detalle}, {tx.banco}, {ingreso}, {gasto}, {tx.monto}")
+        cursor.execute('''
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto))
+        
+        conn.commit()
+        conn.close()
+        return {"status": "ok", "message": "Transaction created"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"ERROR INSERTING TRANSACTION: {e}")
+        raise HTTPException(status_code=500, detail=f"{str(e)} | Tr: {traceback.format_exc()}")
+
+
+# Ensure database schema includes categories
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    # Create Transactions Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            tipo TEXT,
+            categoria TEXT,
+            detalle TEXT,
+            banco TEXT,
+            monto REAL,
+            ingreso REAL,
+            gasto REAL
+        )
+    ''')
+
+    # Create Budgets Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS budgets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL,
+            month TEXT NOT NULL,
+            UNIQUE(category, month)
+        )
+    ''')
+    
+    # Create Categories Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            tipo TEXT DEFAULT 'Gasto'
+        )
+    ''')
+    
+    # Check if categories exist, if not add defaults
+    cursor.execute('SELECT count(*) FROM categories')
+    if cursor.fetchone()[0] == 0:
+        defaults = [
+            ('Alimentación', 'Gasto'), ('Transporte', 'Gasto'), ('Vivienda', 'Gasto'),
+            ('Salud', 'Gasto'), ('Ocio', 'Gasto'), ('Sueldo', 'Ingreso'),
+            ('Regalos', 'Gasto'), ('Educación', 'Gasto'), ('Inversiones', 'Gasto')
+        ]
+        cursor.executemany('INSERT INTO categories (nombre, tipo) VALUES (?, ?)', defaults)
+    
+    # Create Users Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            hashed_password TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0
+        )
+    ''')
+    
+    # Seed default admin user if none exists (password: fiorestzin)
+    cursor.execute('SELECT count(*) FROM users')
+    if cursor.fetchone()[0] == 0:
+        hashed_pwd = ph.hash("fiorestzin")
+        cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (?, ?, ?)', 
+                      ("admin", hashed_pwd, 1))
+        print("Created default admin user: admin / fiorestzin")
+    
+    conn.commit()
+    
+    conn.close()
+
+# Initialize on startup
+init_db()
+
+class Category(BaseModel):
+    nombre: str
+    tipo: str = 'Gasto'
+
+@app.get("/categories")
+def get_categories():
+    conn = get_db_connection()
+    cats = conn.execute("SELECT * FROM categories ORDER BY nombre").fetchall()
+    conn.close()
+    return [dict(row) for row in cats]
+
+@app.post("/categories")
+def create_category(cat: Category):
+    conn = get_db_connection()
+    try:
+        conn.execute("INSERT INTO categories (nombre, tipo) VALUES (?, ?)", (cat.nombre, cat.tipo))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    conn.close()
+    return {"status": "ok", "message": "Category created"}
+
+@app.delete("/categories/{cat_id}")
+def delete_category(cat_id: int):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Category deleted"}
+
+
+
+# --- Budget Management ---
+
+class Budget(BaseModel):
+    category: str
+    amount: float
+    month: str # YYYY-MM
+
+@app.get("/budgets")
+def get_budgets(month: str = None):
+    conn = get_db_connection()
+    query = "SELECT * FROM budgets WHERE 1=1"
+    params = []
+    
+    if month:
+        query += " AND month = ?"
+        params.append(month)
+        
+    query += " ORDER BY month DESC, category ASC"
+    rows = conn.execute(query, params).fetchall()
+    
+    # Calculate progress for each budget
+    # We need to sum actual expenses for that category/month
+    # This is inefficient N+1 but acceptable for small scale
+    budgets_with_progress = []
+    for r in rows:
+        b = dict(r)
+        # Sum expenses for this category and month
+        # month is YYYY-MM
+        cat = b['category']
+        m = b['month']
+        
+        # SQL to sum expenses
+        sum_query = '''
+            SELECT SUM(gasto) 
+            FROM transactions 
+            WHERE categoria = ? AND strftime('%Y-%m', fecha) = ?
+        '''
+        spent = conn.execute(sum_query, (cat, m)).fetchone()[0] or 0
+        b['spent'] = spent
+        b['percentage'] = (spent / b['amount']) * 100 if b['amount'] > 0 else 0
+        budgets_with_progress.append(b)
+        
+    conn.close()
+    return budgets_with_progress
+
+@app.post("/budgets")
+def set_budget(budget: Budget):
+    conn = get_db_connection()
+    try:
+        # UPSERT logic (Insert or Replace)
+        # Depending on sqlite version, INSERT OR REPLACE is standard
+        conn.execute('''
+            INSERT OR REPLACE INTO budgets (category, amount, month)
+            VALUES (?, ?, ?)
+        ''', (budget.category, budget.amount, budget.month))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    conn.close()
+    return {"status": "ok", "message": "Budget set successfully"}
+
+@app.delete("/budgets/{budget_id}")
+def delete_budget(budget_id: int):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Budget deleted"}
+
+# --- Forecasting ---
+
+@app.get("/forecasting")
+def get_forecasting(months_ahead: int = 3):
+    conn = get_db_connection()
+    
+    # 1. Get Monthly History
+    query = '''
+        SELECT strftime('%Y-%m', fecha) as month, SUM(gasto) as gasto 
+        FROM transactions 
+        WHERE gasto > 0 
+        GROUP BY month 
+        ORDER BY month ASC
+    '''
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    if df.empty or len(df) < 2:
+        return {"historical": [], "projection": []}
+    
+    # Convert to numeric for regression
+    df['period'] = range(len(df))
+    
+    # Simple Linear Regression: y = mx + b
+    # We use numpy for this (pandas dependency)
+    import numpy as np
+    
+    x = df['period'].values
+    y = df['gasto'].values
+    
+    # Polyfit degree 1 (Line)
+    slope, intercept = np.polyfit(x, y, 1)
+    
+    # Generate Projections
+    last_period = df['period'].iloc[-1]
+    last_month_str = df['month'].iloc[-1]
+    last_date = pd.to_datetime(last_month_str + '-01')
+    
+    projection_data = []
+    
+    for i in range(1, months_ahead + 1):
+        next_period = last_period + i
+        projected_val = slope * next_period + intercept
+        
+        # Calculate Date
+        next_date = last_date + pd.DateOffset(months=i)
+        month_label = next_date.strftime('%Y-%m')
+        
+        projection_data.append({
+            "month": month_label,
+            "gasto_proyectado": max(0, round(projected_val, 0)), # No negative expenses
+            "is_projection": True
+        })
+        
+    # Mark historical data
+    historical = df[['month', 'gasto']].to_dict(orient='records')
+    for h in historical:
+        h['gasto_proyectado'] = None # Explicitly null for graph
+        h['is_projection'] = False
+        
+    return {
+        "historical": historical,
+        "projection": projection_data,
+        "trend_info": {
+            "slope": round(slope, 2),
+            "trend": "increasing" if slope > 0 else "decreasing"
+        }
+    }
+
+# --- Subscription Detection ---
+
+@app.get("/subscriptions")
+def get_subscriptions():
+    conn = get_db_connection()
+    
+    # Logic: Look for transactions with same 'detalle' and roughly same 'amount' (within small margin)
+    # recurring at least 3 times in different months? 
+    # Or just simple grouping by Exact Detalle + Exact Amount for now.
+    
+    query = '''
+        SELECT 
+            detalle as name, 
+            monto as amount, 
+            COUNT(*) as frequency,
+            MAX(fecha) as last_payment
+        FROM transactions 
+        WHERE gasto > 0
+        GROUP BY detalle, monto
+        HAVING frequency >= 3
+        ORDER BY last_payment DESC
+    '''
+    
+    rows = conn.execute(query).fetchall()
+    conn.close()
+    
+    subs = []
+    for r in rows:
+        # Heuristic: If frequency is high, it's likely a sub.
+        # We could also check if dates are roughly 30 days apart, but SQL group is easier first.
+        subs.append({
+            "name": r['name'],
+            "amount": r['amount'],
+            "frequency": r['frequency'],
+            "last_payment": r['last_payment'],
+            "annual_cost": r['amount'] * 12 # Estimate
+        })
+        
+    return subs
+
+# --- Export Report ---
+
+@app.get("/export_report")
+def export_report(start_date: str = None, end_date: str = None):
+    conn = get_db_connection()
+    
+    # 1. Transactions Sheet
+    query_tx = "SELECT * FROM transactions WHERE 1=1"
+    params = []
+    if start_date:
+        query_tx += " AND fecha >= ?"
+        params.append(start_date)
+    if end_date:
+        query_tx += " AND fecha <= ?"
+        params.append(end_date)
+    query_tx += " ORDER BY fecha DESC"
+    
+    df_tx = pd.read_sql_query(query_tx, conn, params=params)
+    
+    # 2. Summary by Category
+    if not df_tx.empty:
+        df_cat = df_tx[df_tx['gasto'] > 0].groupby('categoria')['gasto'].sum().reset_index().sort_values('gasto', ascending=False)
+    else:
+        df_cat = pd.DataFrame(columns=['categoria', 'gasto'])
+
+    conn.close()
+    
+    # Create Excel
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_tx.to_excel(writer, sheet_name='Transacciones', index=False)
+        df_cat.to_excel(writer, sheet_name='Resumen Categorías', index=False)
+        
+    output.seek(0)
+    
+    headers = {
+        'Content-Disposition': f'attachment; filename="reporte_finance_{start_date}_{end_date}.xlsx"'
+    }
+    return Response(content=output.getvalue(), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
+

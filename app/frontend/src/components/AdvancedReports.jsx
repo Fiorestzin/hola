@@ -1,0 +1,574 @@
+import { useState, useEffect } from 'react';
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+    PieChart, Pie, Cell, Legend, LineChart, Line
+} from 'recharts';
+import {
+    X, Calendar, PieChart as PieIcon, BarChart3, Hourglass,
+    PiggyBank, Flame, TrendingUp, List, CreditCard, Target, AlertCircle, Download
+} from 'lucide-react';
+import DrillDownModal from './DrillDownModal';
+import BudgetManager from './BudgetManager';
+import SubscriptionsModal from './SubscriptionsModal';
+import { API_URL } from "../config";
+
+const COLORS = ['#818cf8', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#a78bfa', '#f87171'];
+const BARS_COLORS = ['#38bdf8', '#34d399', '#f472b6', '#fbbf24'];
+
+export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) {
+    const [dateRange, setDateRange] = useState({
+        start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0], // First day of current month
+        end: new Date().toISOString().split('T')[0]
+    });
+
+    // Data States
+    const [data, setData] = useState({ pie_data: [], bar_data: [] });
+    const [analysisData, setAnalysisData] = useState({ top_expenses: [], payment_methods: [] });
+    const [forecastData, setForecastData] = useState([]);
+    const [subsData, setSubsData] = useState([]);
+    const [subModalOpen, setSubModalOpen] = useState(false);
+    const [loading, setLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState('summary'); // summary, trends, breakdown
+
+    // Drill Down State
+    const [ddOpen, setDdOpen] = useState(false);
+    const [ddTitle, setDdTitle] = useState('');
+    const [ddTransactions, setDdTransactions] = useState([]);
+    const [ddEvolution, setDdEvolution] = useState([]);
+
+    const formatMonth = (dateStr) => {
+        if (!dateStr || dateStr === 'Desconocido') return dateStr;
+        const [year, month] = dateStr.split('-');
+        const date = new Date(year, month - 1);
+        return date.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
+    };
+
+    useEffect(() => {
+        if (isOpen) {
+            fetchReports();
+            fetchAnalysis();
+            fetchForecast();
+            fetchSubscriptions();
+        }
+    }, [isOpen, dateRange]);
+
+    const fetchReports = async () => {
+        setLoading(true);
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end
+            });
+
+            const res = await fetch(`${API_URL}/reports?${query}`);
+            const json = await res.json();
+            setData(json);
+        } catch (error) {
+            console.error("Error fetching reports:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchAnalysis = async () => {
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end
+            });
+            const res = await fetch(`${API_URL}/analysis?${query}`);
+            const json = await res.json();
+            setAnalysisData(json);
+        } catch (error) {
+            console.error("Error fetching analysis:", error);
+        }
+    };
+
+    const fetchForecast = async () => {
+        try {
+            const res = await fetch(`${API_URL}/forecasting`);
+            const json = await res.json();
+            setForecastData(json);
+        } catch (error) {
+            console.error("Error fetching forecast:", error);
+        }
+    };
+
+    const fetchSubscriptions = async () => {
+        try {
+            const res = await fetch(`${API_URL}/subscriptions`);
+            const json = await res.json();
+            setSubsData(json);
+        } catch (error) {
+            console.error("Error fetching subscriptions:", error);
+        }
+    };
+
+    const handleExport = async () => {
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end
+            });
+            window.location.href = `${API_URL}/export_report?${query}`;
+        } catch (error) {
+            console.error("Error exporting report:", error);
+        }
+    };
+
+    const fetchDrillDown = async (filters, title) => {
+        // Merge filters with current date range
+        const params = new URLSearchParams(filters);
+
+        // If not specific specific dates passed (like for monthly bar), use global range
+        if (!filters.start_date && !filters.end_date) {
+            params.append('start_date', dateRange.start);
+            params.append('end_date', dateRange.end);
+        }
+
+        try {
+            const res = await fetch(`${API_URL}/transactions?${params}&limit=0`);
+            const json = await res.json();
+            setDdTransactions(json);
+            setDdTitle(title);
+            setDdOpen(true);
+        } catch (error) {
+            console.error("Drilldown error:", error);
+        }
+    };
+
+    const handlePieClick = (data) => {
+        if (!data) return;
+        const category = data.name;
+        fetchDrillDown({ category }, `Gastos en ${category}`);
+    };
+
+    const handleBarClick = (data) => {
+        if (!data || !data.activePayload) return;
+        const payload = data.activePayload[0].payload;
+        const monthStr = payload.month;
+        if (monthStr === 'Desconocido') return;
+
+        const [year, month] = monthStr.split('-');
+        const startDate = `${year}-${month}-01`;
+        // Last day of month
+        const lastDay = new Date(year, month, 0).getDate();
+        const endDate = `${year}-${month}-${lastDay}`;
+
+        setDdEvolution([]);
+        fetchDrillDown({ start_date: startDate, end_date: endDate }, `Resumen ${formatMonth(monthStr)}`);
+    };
+
+    const handleTopItemClick = async (data) => {
+        if (!data) return;
+
+        const itemName = data.name; // When clicking Bar, data is the item { name, value }
+
+        // Fetch History
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end,
+                filter_col: 'detalle',
+                filter_val: itemName
+            });
+            const res = await fetch(`${API_URL}/history?${query}`);
+            const hist = await res.json();
+            setDdEvolution(hist);
+        } catch (e) {
+            console.error("History fetch failed", e);
+            setDdEvolution([]);
+        }
+
+        fetchDrillDown({ detalle: itemName }, `Detalle: ${itemName}`);
+    };
+
+    const handleBankClick = (data) => {
+        if (!data) return;
+        fetchDrillDown({ bank: data.name }, `Transacciones: ${data.name}`);
+    };
+
+
+    const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
+
+    // --- KPI Calculations ---
+    const barData = Array.isArray(data.bar_data) ? data.bar_data : [];
+    const pieData = Array.isArray(data.pie_data) ? data.pie_data : [];
+    const topExpenses = analysisData && Array.isArray(analysisData.top_expenses) ? analysisData.top_expenses : [];
+    const paymentMethods = analysisData && Array.isArray(analysisData.payment_methods) ? analysisData.payment_methods : [];
+    const forecast = Array.isArray(forecastData) ? forecastData : [];
+
+    const totalIncome = barData.reduce((acc, curr) => acc + (curr.ingreso || 0), 0);
+    const totalExpense = barData.reduce((acc, curr) => acc + (curr.gasto || 0), 0);
+
+    const start = new Date(dateRange.start);
+    const end = new Date(dateRange.end);
+    const diffTime = Math.abs(end - start);
+    const diffDays = Math.max(Math.ceil(diffTime / (1000 * 60 * 60 * 24)), 1);
+
+    // 1. Runway (Months)
+    const monthlyExpenseAvg = totalExpense / (diffDays / 30);
+    const runway = monthlyExpenseAvg > 0 ? (totalNetWorth / monthlyExpenseAvg).toFixed(1) : "∞";
+
+    // 2. Savings Rate
+    const savingsRate = totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0;
+
+    // 3. Burn Rate (Daily)
+    const burnRate = totalExpense / diffDays;
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-slate-900 z-40 overflow-y-auto">
+            <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
+
+                {/* Header & Controls */}
+                <header className="flex flex-col md:flex-row justify-between items-center bg-slate-800/50 p-6 rounded-2xl border border-slate-700 sticky top-4 backdrop-blur-md z-50 shadow-xl gap-4">
+                    <div>
+                        <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400">
+                            Dashboard Financiero
+                        </h1>
+                        <p className="text-slate-400 text-sm">Visión 360° de tu economía</p>
+                    </div>
+
+                    <div className="flex flex-col xl:flex-row items-center gap-4">
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setSubModalOpen(true)}
+                                className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 px-3 py-2 rounded-lg border border-purple-500/50 transition-all text-sm flex items-center gap-2"
+                                title="Detecta gastos recurrentes automáticos (Netflix, Spotify, etc.)"
+                            >
+                                <AlertCircle size={16} />
+                                <span className="hidden md:inline">{subsData.length > 0 ? `${subsData.length} Subs` : 'Detector'}</span>
+                            </button>
+                            <button
+                                onClick={handleExport}
+                                className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-2 rounded-lg border border-emerald-500/50 transition-all text-sm flex items-center gap-2"
+                                title="Exportar a Excel"
+                            >
+                                <Download size={16} />
+                                <span className="hidden md:inline">Excel</span>
+                            </button>
+                        </div>
+
+                        {/* Date Picker */}
+                        <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-700">
+                            <Calendar size={16} className="text-slate-400" />
+                            <input
+                                type="date"
+                                value={dateRange.start}
+                                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                                className="bg-transparent text-white text-sm focus:outline-none w-24"
+                            />
+                            <span className="text-slate-600">-</span>
+                            <input
+                                type="date"
+                                value={dateRange.end}
+                                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                                className="bg-transparent text-white text-sm focus:outline-none w-24"
+                            />
+                        </div>
+
+                        {/* Tabs Navigation */}
+                        <div className="flex bg-slate-900/50 p-1 rounded-lg border border-slate-700 overflow-x-auto max-w-[300px] md:max-w-none">
+                            <button
+                                onClick={() => setActiveTab('summary')}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <PieIcon size={16} /> <span className="hidden sm:inline">Resumen</span>
+                                </div>
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('trends')}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'trends' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <TrendingUp size={16} /> <span className="hidden sm:inline">Tendencia</span>
+                                </div>
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('breakdown')}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'breakdown' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <List size={16} /> <span className="hidden sm:inline">Desglose</span>
+                                </div>
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('budgets')}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'budgets' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <Target size={16} /> <span className="hidden sm:inline">Metas</span>
+                                </div>
+                            </button>
+                        </div>
+
+                        <button onClick={onClose} className="p-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors text-white">
+                            <X size={24} />
+                        </button>
+                    </div>
+                </header>
+
+                {loading ? (
+                    <div className="h-64 flex items-center justify-center text-slate-500">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-cyan-500 mr-2"></div>
+                        Analizando finanzas...
+                    </div>
+                ) : (
+                    <div className="min-h-[600px]">
+
+                        {/* --- TAB: SUMMARY --- */}
+                        {activeTab === 'summary' && (
+                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+                                {/* KPI Cards */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                    <KpiCard
+                                        title="Runway"
+                                        value={`${runway} meses`}
+                                        sub="Libertad financiera teórica"
+                                        icon={<Hourglass size={20} />}
+                                        color="indigo"
+                                    />
+                                    <KpiCard
+                                        title="Tasa de Ahorro"
+                                        value={`${savingsRate.toFixed(1)}%`}
+                                        sub="% Ingresos retenidos"
+                                        icon={<PiggyBank size={20} />}
+                                        color={savingsRate >= 20 ? 'emerald' : 'yellow'}
+                                    />
+                                    <KpiCard
+                                        title="Burn Rate Diario"
+                                        value={fmt(burnRate)}
+                                        sub="Gasto promedio por día"
+                                        icon={<Flame size={20} />}
+                                        color="rose"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <ChartCard title="Distribución de Gastos" icon={<PieIcon className="text-pink-400" size={20} />}>
+                                        {pieData.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <PieChart>
+                                                    <Pie
+                                                        data={pieData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        innerRadius={60}
+                                                        outerRadius={100}
+                                                        paddingAngle={5}
+                                                        dataKey="value"
+                                                        onClick={handlePieClick}
+                                                        className="cursor-pointer focus:outline-none"
+                                                    >
+                                                        {pieData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Legend />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay gastos en este periodo
+                                            </div>
+                                        )}
+                                    </ChartCard>
+
+                                    <ChartCard title="Histórico Mensual" icon={<BarChart3 className="text-purple-400" size={20} />}>
+                                        {barData.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart data={barData} onClick={handleBarClick} className="cursor-pointer">
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                                                    <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
+                                                    <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 12 }} />
+                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Legend />
+                                                    <Bar dataKey="ingreso" name="Ingresos" fill="#34d399" radius={[4, 4, 0, 0]} />
+                                                    <Bar dataKey="gasto" name="Gastos" fill="#f87171" radius={[4, 4, 0, 0]} />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay datos históricos
+                                            </div>
+                                        )}
+                                    </ChartCard>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- TAB: TRENDS --- */}
+                        {activeTab === 'trends' && (
+                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+                                <div className="p-6 bg-slate-800/50 border border-slate-700 rounded-2xl text-center">
+                                    <h3 className="text-xl font-bold text-slate-200 mb-2">Comparativa Anual & Presupuestos</h3>
+                                    <p className="text-slate-400 mb-8">Visualiza cómo se compara tu "Yo Actual" vs "Yo del Pasado".</p>
+
+                                    <div className="h-[400px]">
+                                        {barData.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <LineChart data={forecast.length > 0 ? forecast : barData}>
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                                                    <XAxis dataKey="month" stroke="#94a3b8" tickFormatter={formatMonth} />
+                                                    <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} />
+                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Legend />
+                                                    <Line type="monotone" dataKey="gasto" name="Gastos Históricos" stroke="#f87171" strokeWidth={3} dot={{ r: 4 }} />
+                                                    <Line type="monotone" dataKey="gasto_proyectado" name="Proyección (IA)" stroke="#a78bfa" strokeWidth={3} strokeDasharray="5 5" dot={{ r: 4 }} />
+                                                </LineChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay datos históricos para tendencias
+                                            </div>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-4">* Proyección basada en regresión lineal simple de tus gastos históricos.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- TAB: BREAKDOWN --- */}
+                        {activeTab === 'breakdown' && (
+                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+
+                                    {/* Top 10 Expenses */}
+                                    <ChartCard title="Top 10 Gastos Individuales" icon={<List className="text-yellow-400" size={20} />}>
+                                        {topExpenses.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <BarChart
+                                                    layout="vertical"
+                                                    data={topExpenses}
+                                                    className="cursor-pointer"
+                                                    margin={{ left: 20 }} // Space for strict labels
+                                                >
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} horizontal={false} />
+                                                    <XAxis type="number" stroke="#94a3b8" hide />
+                                                    <YAxis
+                                                        dataKey="name"
+                                                        type="category"
+                                                        stroke="#cbd5e1"
+                                                        width={100}
+                                                        tick={{ fontSize: 11 }}
+                                                    />
+                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Bar dataKey="value" fill="#fbbf24" radius={[0, 4, 4, 0]} onClick={handleTopItemClick}>
+                                                        {topExpenses.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={BARS_COLORS[index % BARS_COLORS.length]} />
+                                                        ))}
+                                                    </Bar>
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay gastos individuales significativos
+                                            </div>
+                                        )}
+                                    </ChartCard>
+
+                                    {/* Payment Methods */}
+                                    <ChartCard title="Medios de Pago" icon={<CreditCard className="text-blue-400" size={20} />}>
+                                        {paymentMethods.length > 0 ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <PieChart>
+                                                    <Pie
+                                                        data={paymentMethods}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        innerRadius={60}
+                                                        outerRadius={100}
+                                                        paddingAngle={5}
+                                                        dataKey="value"
+                                                        onClick={handleBankClick}
+                                                        className="cursor-pointer"
+                                                    >
+                                                        {paymentMethods.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Legend />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay datos de medios de pago
+                                            </div>
+                                        )}
+                                    </ChartCard>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- TAB: BUDGETS --- */}
+                        {activeTab === 'budgets' && (
+                            <div className="animate-in fade-in zoom-in duration-300">
+                                <BudgetManager isOpen={true} />
+                            </div>
+                        )}
+
+                    </div>
+                )}
+
+                <DrillDownModal
+                    isOpen={ddOpen}
+                    onClose={() => setDdOpen(false)}
+                    title={ddTitle}
+                    transactions={ddTransactions}
+                    evolutionData={ddEvolution}
+                />
+
+                <SubscriptionsModal
+                    isOpen={subModalOpen}
+                    onClose={() => setSubModalOpen(false)}
+                    subscriptions={subsData}
+                />
+            </div>
+        </div>
+    );
+}
+
+// Helper Components for Cleaner JSX
+function KpiCard({ title, value, sub, icon, color }) {
+    const colorClasses = {
+        indigo: 'text-indigo-400 bg-indigo-500/20 hover:border-indigo-500/50',
+        emerald: 'text-emerald-400 bg-emerald-500/20 hover:border-emerald-500/50',
+        yellow: 'text-yellow-400 bg-yellow-500/20 hover:border-yellow-500/50',
+        rose: 'text-rose-400 bg-rose-500/20 hover:border-rose-500/50',
+    };
+
+    return (
+        <div className={`bg-slate-800/50 p-6 rounded-2xl border border-slate-700 relative overflow-hidden group transition-all ${colorClasses[color] ? colorClasses[color].split(' ')[2] : ''}`}>
+            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                {icon}
+            </div>
+            <div className="flex items-center gap-3 mb-2">
+                <div className={`p-2 rounded-lg ${colorClasses[color] ? colorClasses[color].split(' ')[0] + ' ' + colorClasses[color].split(' ')[1] : ''}`}>
+                    {icon}
+                </div>
+                <h3 className="font-bold text-slate-300">{title}</h3>
+            </div>
+            <p className="text-4xl font-bold text-white mb-1">{value}</p>
+            <p className="text-xs text-slate-400">{sub}</p>
+        </div>
+    );
+}
+
+function ChartCard({ title, icon, children }) {
+    return (
+        <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl min-h-[400px] flex flex-col">
+            <h3 className="font-bold text-slate-200 mb-6 flex items-center gap-2">
+                {icon} {title}
+            </h3>
+            <div className="flex-1 w-full relative">
+                {children}
+            </div>
+        </div>
+    );
+}

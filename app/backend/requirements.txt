@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandas
+openpyxl
+pydantic
+python-multipart
+python-jose[cryptography]
+argon2-cffi

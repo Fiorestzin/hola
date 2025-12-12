@@ -1,0 +1,27 @@
+services:
+  # Backend API
+  - type: web
+    name: finanzas-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FINANCE_ENV
+        value: PROD
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    disk:
+      name: finance-data
+      mountPath: /data
+      sizeGB: 1
+    rootDir: app/backend
+
+  # Frontend Static Site
+  - type: static
+    name: finanzas-web
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://finanzas-api.onrender.com
+    rootDir: app/frontend
