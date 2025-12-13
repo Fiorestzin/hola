@@ -3,6 +3,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2 } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
+import BanksManager from './components/BanksManager';
 import AdvancedReports from './components/AdvancedReports';
 import { EnvironmentControls } from "./components/EnvironmentControls";
 import Login from "./components/Login";
@@ -24,6 +25,7 @@ function App() {
 
   // Categories State
   const [isCatsOpen, setIsCatsOpen] = useState(false);
+  const [isBanksOpen, setIsBanksOpen] = useState(false);
 
   // Reports State
   const [isReportsOpen, setIsReportsOpen] = useState(false);
@@ -202,6 +204,13 @@ function App() {
                 <Settings size={20} />
               </button>
               <button
+                onClick={() => setIsBanksOpen(true)}
+                className="bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors text-slate-300 hover:text-white"
+                title="Gestionar Bancos"
+              >
+                <Building2 size={20} />
+              </button>
+              <button
                 onClick={handleLogout}
                 className="bg-red-900/50 hover:bg-red-800 p-3 rounded-xl transition-colors text-red-300 hover:text-white"
                 title="Cerrar Sesión"
@@ -357,6 +366,12 @@ function App() {
       < CategoriesManager
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
+      />
+
+      {/* Banks Manager */}
+      <BanksManager
+        isOpen={isBanksOpen}
+        onClose={() => setIsBanksOpen(false)}
       />
 
       {/* Advanced Reports */}

@@ -562,6 +562,20 @@ def init_db():
         ]
         cursor.executemany('INSERT INTO categories (nombre, tipo) VALUES (?, ?)', defaults)
     
+    # Create Banks Table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS banks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE
+        )
+    ''')
+    
+    # Check if banks exist, if not add defaults
+    cursor.execute('SELECT count(*) FROM banks')
+    if cursor.fetchone()[0] == 0:
+        default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',)]
+        cursor.executemany('INSERT INTO banks (nombre) VALUES (?)', default_banks)
+    
     # Create Users Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -618,6 +632,38 @@ def delete_category(cat_id: int):
     conn.close()
     return {"status": "ok", "message": "Category deleted"}
 
+
+# --- Bank Management ---
+
+class Bank(BaseModel):
+    nombre: str
+
+@app.get("/banks")
+def get_banks():
+    conn = get_db_connection()
+    banks = conn.execute("SELECT * FROM banks ORDER BY nombre").fetchall()
+    conn.close()
+    return [dict(row) for row in banks]
+
+@app.post("/banks")
+def create_bank(bank: Bank):
+    conn = get_db_connection()
+    try:
+        conn.execute("INSERT INTO banks (nombre) VALUES (?)", (bank.nombre,))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    conn.close()
+    return {"status": "ok", "message": "Bank created"}
+
+@app.delete("/banks/{bank_id}")
+def delete_bank(bank_id: int):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM banks WHERE id = ?", (bank_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Bank deleted"}
 
 
 # --- Budget Management ---
