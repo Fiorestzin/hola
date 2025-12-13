@@ -244,6 +244,76 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"username": current_user["username"], "is_admin": current_user["is_admin"]}
 
+# --- SETTINGS ENDPOINTS ---
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.post("/settings/change-password")
+async def change_login_password(data: PasswordChange, current_user = Depends(get_current_user)):
+    """Change the user's login password. Requires current password verification."""
+    # Verify current password
+    if not verify_password(data.current_password, current_user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Contraseña actual incorrecta")
+    
+    # Hash and update new password
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    new_hash = ph.hash(data.new_password)
+    cursor.execute(sql_param("UPDATE users SET hashed_password = ? WHERE id = ?"), 
+                   (new_hash, current_user["id"]))
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok", "message": "Contraseña de inicio de sesión actualizada"}
+
+class DeletePhraseChange(BaseModel):
+    current_phrase: str
+    new_phrase: str
+
+# Store delete confirmation phrase in a settings table or as a user attribute
+# For now, we'll create a simple settings table
+@app.post("/settings/change-delete-phrase")
+async def change_delete_phrase(data: DeletePhraseChange, current_user = Depends(get_current_user)):
+    """Change the phrase required to confirm delete operations."""
+    # Get current phrase from database
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param("SELECT value FROM settings WHERE key = ?"), ("delete_phrase",))
+    row = cursor.fetchone()
+    current_phrase = row[0] if row else "fiorestzin"  # Default
+    
+    # Verify current phrase
+    if data.current_phrase != current_phrase:
+        conn.close()
+        raise HTTPException(status_code=401, detail="Frase actual incorrecta")
+    
+    # Update or insert new phrase
+    try:
+        if row:
+            cursor.execute(sql_param("UPDATE settings SET value = ? WHERE key = ?"), 
+                           (data.new_phrase, "delete_phrase"))
+        else:
+            cursor.execute(sql_param("INSERT INTO settings (key, value) VALUES (?, ?)"),
+                           ("delete_phrase", data.new_phrase))
+        conn.commit()
+    finally:
+        conn.close()
+    
+    return {"status": "ok", "message": "Frase de confirmación actualizada"}
+
+@app.get("/settings/delete-phrase")
+async def get_delete_phrase(current_user = Depends(get_current_user)):
+    """Get current delete confirmation phrase for verification."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("SELECT value FROM settings WHERE key = ?"), ("delete_phrase",))
+    row = cursor.fetchone()
+    conn.close()
+    return {"phrase": row[0] if row else "fiorestzin"}
+
 # Global environment state (shared across requests)
 current_environment = "TEST"  # Default to demo mode
 
@@ -662,16 +732,30 @@ def init_db():
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
                 nombre TEXT NOT NULL,
-                tipo TEXT DEFAULT 'Gasto'
+                tipo TEXT DEFAULT 'Gasto',
+                environment TEXT DEFAULT NULL
             )
         ''')
+        
+        # Migration: Add environment column if it doesn't exist (for existing databases)
+        try:
+            cursor.execute("ALTER TABLE categories ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS banks (
                 id SERIAL PRIMARY KEY,
-                nombre TEXT NOT NULL UNIQUE
+                nombre TEXT NOT NULL,
+                environment TEXT DEFAULT NULL
             )
         ''')
+        
+        # Migration: Add environment column to banks if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE banks ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -679,6 +763,15 @@ def init_db():
                 username TEXT UNIQUE NOT NULL,
                 hashed_password TEXT NOT NULL,
                 is_admin INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Settings table for configurable values
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id SERIAL PRIMARY KEY,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT
             )
         ''')
         
@@ -735,9 +828,16 @@ def init_db():
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
-                tipo TEXT DEFAULT 'Gasto'
+                tipo TEXT DEFAULT 'Gasto',
+                environment TEXT DEFAULT NULL
             )
         ''')
+        
+        # SQLite migration: Add environment column if missing
+        try:
+            cursor.execute("ALTER TABLE categories ADD COLUMN environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('SELECT count(*) FROM categories')
         if cursor.fetchone()[0] == 0:
@@ -751,9 +851,16 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS banks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                nombre TEXT NOT NULL UNIQUE
+                nombre TEXT NOT NULL,
+                environment TEXT DEFAULT NULL
             )
         ''')
+        
+        # SQLite migration: Add environment column if missing
+        try:
+            cursor.execute("ALTER TABLE banks ADD COLUMN environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('SELECT count(*) FROM banks')
         if cursor.fetchone()[0] == 0:
@@ -786,30 +893,42 @@ init_db()
 class Category(BaseModel):
     nombre: str
     tipo: str = 'Gasto'
+    environment: str = 'TEST'  # TEST (demo) or PROD (real)
 
 @app.get("/categories")
-def get_categories():
+def get_categories(environment: str = None):
+    """Get categories. If environment is specified, filter by it. Otherwise return all (for backwards compatibility)."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, nombre, tipo FROM categories ORDER BY nombre")
+    
+    if environment:
+        # Filter by environment: get shared (NULL/empty) + environment-specific
+        cursor.execute(sql_param(
+            "SELECT id, nombre, tipo, environment FROM categories WHERE environment IS NULL OR environment = '' OR environment = ? ORDER BY nombre"
+        ), (environment,))
+    else:
+        cursor.execute("SELECT id, nombre, tipo, environment FROM categories ORDER BY nombre")
+    
     rows = cursor.fetchall()
     conn.close()
     if USE_POSTGRES:
-        return [{"id": row[0], "nombre": row[1], "tipo": row[2]} for row in rows]
+        return [{"id": row[0], "nombre": row[1], "tipo": row[2], "environment": row[3]} for row in rows]
     return [dict(row) for row in rows]
 
 @app.post("/categories")
 def create_category(cat: Category):
+    """Create a new category in the specified environment."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(sql_param("INSERT INTO categories (nombre, tipo) VALUES (?, ?)"), (cat.nombre, cat.tipo))
+        cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, ?)"), 
+                       (cat.nombre, cat.tipo, cat.environment))
         conn.commit()
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=400, detail=str(e))
     conn.close()
-    return {"status": "ok", "message": "Category created"}
+    return {"status": "ok", "message": "Category created", "environment": cat.environment}
 
 @app.delete("/categories/{cat_id}")
 def delete_category(cat_id: int):
@@ -826,30 +945,42 @@ def delete_category(cat_id: int):
 
 class Bank(BaseModel):
     nombre: str
+    environment: str = 'TEST'  # TEST (demo) or PROD (real)
 
 @app.get("/banks")
-def get_banks():
+def get_banks(environment: str = None):
+    """Get banks. If environment is specified, filter by it. Otherwise return all (for backwards compatibility)."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, nombre FROM banks ORDER BY nombre")
+    
+    if environment:
+        # Filter by environment: get shared (NULL/empty) + environment-specific
+        cursor.execute(sql_param(
+            "SELECT id, nombre, environment FROM banks WHERE environment IS NULL OR environment = '' OR environment = ? ORDER BY nombre"
+        ), (environment,))
+    else:
+        cursor.execute("SELECT id, nombre, environment FROM banks ORDER BY nombre")
+    
     rows = cursor.fetchall()
     conn.close()
     if USE_POSTGRES:
-        return [{"id": row[0], "nombre": row[1]} for row in rows]
+        return [{"id": row[0], "nombre": row[1], "environment": row[2]} for row in rows]
     return [dict(row) for row in rows]
 
 @app.post("/banks")
 def create_bank(bank: Bank):
+    """Create a new bank in the specified environment."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(sql_param("INSERT INTO banks (nombre) VALUES (?)"), (bank.nombre,))
+        cursor.execute(sql_param("INSERT INTO banks (nombre, environment) VALUES (?, ?)"), 
+                       (bank.nombre, bank.environment))
         conn.commit()
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=400, detail=str(e))
     conn.close()
-    return {"status": "ok", "message": "Bank created"}
+    return {"status": "ok", "message": "Bank created", "environment": bank.environment}
 
 @app.delete("/banks/{bank_id}")
 def delete_bank(bank_id: int):
@@ -1025,40 +1156,71 @@ def get_forecasting(months_ahead: int = 3):
 # --- Subscription Detection ---
 
 @app.get("/subscriptions")
-def get_subscriptions():
+def get_subscriptions(environment: str = "TEST"):
+    """Detect recurring expenses (potential subscriptions) based on transactions that appear in multiple distinct months."""
     conn = get_db_connection()
     
-    # Logic: Look for transactions with same 'detalle' and roughly same 'amount' (within small margin)
-    # recurring at least 3 times in different months? 
-    # Or just simple grouping by Exact Detalle + Exact Amount for now.
+    # Improved logic:
+    # 1. Filter by environment
+    # 2. Group by detalle (item name)
+    # 3. Use average amount instead of exact match
+    # 4. Count distinct months instead of just frequency
     
-    query = '''
-        SELECT 
-            detalle as name, 
-            monto as amount, 
-            COUNT(*) as frequency,
-            MAX(fecha) as last_payment
-        FROM transactions 
-        WHERE gasto > 0
-        GROUP BY detalle, monto
-        HAVING frequency >= 3
-        ORDER BY last_payment DESC
-    '''
+    if USE_POSTGRES:
+        query = '''
+            SELECT 
+                detalle as name, 
+                ROUND(AVG(monto)::numeric, 0) as amount, 
+                COUNT(*) as frequency,
+                MAX(fecha) as last_payment,
+                COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) as distinct_months
+            FROM transactions 
+            WHERE gasto > 0 AND environment = %s
+            GROUP BY detalle
+            HAVING COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) >= 3
+            ORDER BY last_payment DESC
+        '''
+    else:
+        # SQLite version
+        query = '''
+            SELECT 
+                detalle as name, 
+                ROUND(AVG(monto), 0) as amount, 
+                COUNT(*) as frequency,
+                MAX(fecha) as last_payment,
+                COUNT(DISTINCT strftime('%Y-%m', fecha)) as distinct_months
+            FROM transactions 
+            WHERE gasto > 0 AND environment = ?
+            GROUP BY detalle
+            HAVING COUNT(DISTINCT strftime('%Y-%m', fecha)) >= 3
+            ORDER BY last_payment DESC
+        '''
     
-    rows = conn.execute(query).fetchall()
+    cursor = conn.cursor()
+    cursor.execute(query, (environment,))
+    rows = cursor.fetchall()
     conn.close()
     
     subs = []
     for r in rows:
-        # Heuristic: If frequency is high, it's likely a sub.
-        # We could also check if dates are roughly 30 days apart, but SQL group is easier first.
-        subs.append({
-            "name": r['name'],
-            "amount": r['amount'],
-            "frequency": r['frequency'],
-            "last_payment": r['last_payment'],
-            "annual_cost": r['amount'] * 12 # Estimate
-        })
+        if USE_POSTGRES:
+            subs.append({
+                "name": r[0],
+                "amount": float(r[1]) if r[1] else 0,
+                "frequency": r[2],
+                "last_payment": r[3],
+                "distinct_months": r[4],
+                "annual_cost": float(r[1]) * 12 if r[1] else 0
+            })
+        else:
+            subs.append({
+                "name": r[0],
+                "amount": r[1] or 0,
+                "frequency": r[2],
+                "last_payment": r[3],
+                "distinct_months": r[4],
+                "annual_cost": (r[1] or 0) * 12
+            })
         
     return subs
 

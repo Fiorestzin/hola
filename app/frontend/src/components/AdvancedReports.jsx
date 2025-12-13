@@ -100,7 +100,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 
     const fetchSubscriptions = async () => {
         try {
-            const res = await fetch(`${API_URL}/subscriptions`);
+            const res = await fetch(`${API_URL}/subscriptions?environment=${environment}`);
             const json = await res.json();
             setSubsData(json);
         } catch (error) {
@@ -497,7 +497,13 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
                                                         ))}
                                                     </Pie>
-                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        formatter={(val) => fmt(val)}
+                                                        cursor={{ fill: 'transparent' }}
+                                                    />
                                                     <Legend />
                                                 </PieChart>
                                             </ResponsiveContainer>
@@ -723,7 +729,13 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                         width={100}
                                                         tick={{ fontSize: 11 }}
                                                     />
-                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        formatter={(val) => fmt(val)}
+                                                        cursor={{ fill: 'transparent' }}
+                                                    />
                                                     <Bar dataKey="value" fill="#fbbf24" radius={[0, 4, 4, 0]} onClick={handleTopItemClick}>
                                                         {topExpenses.map((entry, index) => (
                                                             <Cell key={`cell-${index}`} fill={BARS_COLORS[index % BARS_COLORS.length]} />
@@ -758,7 +770,13 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
                                                         ))}
                                                     </Pie>
-                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        formatter={(val) => fmt(val)}
+                                                        cursor={{ fill: 'transparent' }}
+                                                    />
                                                     <Legend />
                                                 </PieChart>
                                             </ResponsiveContainer>

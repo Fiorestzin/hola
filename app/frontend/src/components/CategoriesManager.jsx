@@ -2,18 +2,18 @@ import { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Tag } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function CategoriesManager({ isOpen, onClose }) {
+export default function CategoriesManager({ isOpen, onClose, environment = "TEST" }) {
     const [categories, setCategories] = useState([]);
     const [newCat, setNewCat] = useState('');
     const [newType, setNewType] = useState('Gasto');
 
     useEffect(() => {
         if (isOpen) fetchCategories();
-    }, [isOpen]);
+    }, [isOpen, environment]);
 
     const fetchCategories = async () => {
         try {
-            const res = await fetch(`${API_URL}/categories`);
+            const res = await fetch(`${API_URL}/categories?environment=${environment}`);
             if (res.ok) {
                 const data = await res.json();
                 setCategories(data);
@@ -31,7 +31,7 @@ export default function CategoriesManager({ isOpen, onClose }) {
             const res = await fetch(`${API_URL}/categories`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: newCat, tipo: newType })
+                body: JSON.stringify({ nombre: newCat, tipo: newType, environment })
             });
             if (res.ok) {
                 setNewCat('');

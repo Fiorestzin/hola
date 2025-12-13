@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2 } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
 import BanksManager from './components/BanksManager';
 import AdvancedReports from './components/AdvancedReports';
+import SettingsPanel from './components/SettingsPanel';
 import { EnvironmentControls } from "./components/EnvironmentControls";
 import Login from "./components/Login";
 import { API_URL } from "./config";
@@ -29,6 +30,9 @@ function App() {
 
   // Reports State
   const [isReportsOpen, setIsReportsOpen] = useState(false);
+
+  // Settings State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Check if already logged in on startup
   useEffect(() => {
@@ -248,6 +252,13 @@ function App() {
                 <Building2 size={20} />
               </button>
               <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="bg-amber-900/50 hover:bg-amber-800 p-3 rounded-xl transition-colors text-amber-300 hover:text-white"
+                title="Configuración de Seguridad"
+              >
+                <Shield size={20} />
+              </button>
+              <button
                 onClick={handleLogout}
                 className="bg-red-900/50 hover:bg-red-800 p-3 rounded-xl transition-colors text-red-300 hover:text-white"
                 title="Cerrar Sesión"
@@ -403,12 +414,14 @@ function App() {
       < CategoriesManager
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
+        environment={currentEnv}
       />
 
       {/* Banks Manager */}
       <BanksManager
         isOpen={isBanksOpen}
         onClose={() => setIsBanksOpen(false)}
+        environment={currentEnv}
       />
 
       {/* Advanced Reports */}
@@ -417,6 +430,13 @@ function App() {
         onClose={() => setIsReportsOpen(false)}
         totalNetWorth={totalSaldo}
         environment={currentEnv}
+      />
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        token={token}
       />
     </div >
   );

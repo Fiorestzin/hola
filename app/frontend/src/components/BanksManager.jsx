@@ -2,17 +2,17 @@ import { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Building2 } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function BanksManager({ isOpen, onClose }) {
+export default function BanksManager({ isOpen, onClose, environment = "TEST" }) {
     const [banks, setBanks] = useState([]);
     const [newBank, setNewBank] = useState('');
 
     useEffect(() => {
         if (isOpen) fetchBanks();
-    }, [isOpen]);
+    }, [isOpen, environment]);
 
     const fetchBanks = async () => {
         try {
-            const res = await fetch(`${API_URL}/banks`);
+            const res = await fetch(`${API_URL}/banks?environment=${environment}`);
             if (res.ok) {
                 const data = await res.json();
                 setBanks(data);
@@ -30,7 +30,7 @@ export default function BanksManager({ isOpen, onClose }) {
             const res = await fetch(`${API_URL}/banks`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: newBank })
+                body: JSON.stringify({ nombre: newBank, environment })
             });
             if (res.ok) {
                 setNewBank('');
