@@ -255,12 +255,13 @@ def get_transactions(
     end_date: str = None, 
     category: str = None, 
     bank: str = None,
-    detalle: str = None
+    detalle: str = None,
+    environment: str = "TEST"  # TEST (demo) or PROD (real)
 ):
     conn = get_db_connection()
     
-    real_query = "SELECT * FROM transactions WHERE 1=1"
-    real_params = []
+    real_query = "SELECT * FROM transactions WHERE environment = ?"
+    real_params = [environment]
     
     if start_date:
         real_query += " AND fecha >= ?"
@@ -290,15 +291,16 @@ def get_transactions(
     conn.close()
     
     if USE_POSTGRES:
-        columns = ['id', 'fecha', 'tipo', 'categoria', 'detalle', 'banco', 'monto', 'ingreso', 'gasto']
+        columns = ['id', 'fecha', 'tipo', 'categoria', 'detalle', 'banco', 'monto', 'ingreso', 'gasto', 'environment']
         return [dict(zip(columns, row)) for row in rows]
     return [dict(row) for row in rows]
 
 
+
 @app.get("/summary/banks")
-def get_bank_balances():
+def get_bank_balances(environment: str = "TEST"):
     conn = get_db_connection()
-    # Calculate balance: Sum(Ingreso) - Sum(Gasto) grouped by Bank
+    cursor = conn.cursor()
     query = '''
         SELECT 
             banco, 
@@ -306,12 +308,11 @@ def get_bank_balances():
             SUM(gasto) as total_gasto,
             (SUM(ingreso) - SUM(gasto)) as saldo
         FROM transactions 
-        WHERE banco IS NOT NULL AND banco != 'None' AND banco != 'nan'
+        WHERE environment = ? AND banco IS NOT NULL AND banco != 'None' AND banco != 'nan'
         GROUP BY banco
         ORDER BY saldo DESC
     '''
-    cursor = conn.cursor()
-    cursor.execute(query)
+    cursor.execute(sql_param(query), [environment])
     rows = cursor.fetchall()
     conn.close()
     
@@ -321,18 +322,19 @@ def get_bank_balances():
 
 
 @app.get("/reports")
-def get_reports(start_date: str = None, end_date: str = None):
+def get_reports(start_date: str = None, end_date: str = None, environment: str = "TEST"):
     conn = get_db_connection()
     
-    # Base filter
-    where_clause = "1=1"
-    params = []
+    # Base filter with environment
+    where_clause = "environment = ?"
+    params = [environment]
     if start_date:
         where_clause += " AND fecha >= ?"
         params.append(start_date)
     if end_date:
         where_clause += " AND fecha <= ?"
         params.append(end_date)
+
 
     # 1. Category Breakdown (Pie Chart) - ONLY Expenses for now
     cat_query = f'''
@@ -546,7 +548,8 @@ class Transaction(BaseModel):
     categoria: str
     detalle: str
     banco: str
-    monto: float # We receive a single amount and split it based on type
+    monto: float
+    environment: str = "TEST"  # TEST (demo) or PROD (real)
 
 @app.post("/transaction")
 def create_transaction(tx: Transaction):
@@ -556,23 +559,22 @@ def create_transaction(tx: Transaction):
     ingreso = 0
     gasto = 0
     
-    # Simple logic: positive amount = Ingreso, negative amount or type 'Gasto' = Gasto?
-    # Let's rely on 'tipo' sent from frontend which is clearer
     if tx.tipo == 'Ingreso':
         ingreso = tx.monto
     else:
         gasto = tx.monto
         
     try:
-        print(f"DEBUG TRYING INSERT: {tx.fecha}, {tx.tipo}, {tx.categoria}, {tx.detalle}, {tx.banco}, {ingreso}, {gasto}, {tx.monto}")
+        print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}")
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto))
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto, tx.environment))
         
         conn.commit()
         conn.close()
         return {"status": "ok", "message": "Transaction created"}
+
     except Exception as e:
         import traceback
         traceback.print_exc()
