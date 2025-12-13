@@ -498,37 +498,108 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
                             </div>
                         )}
 
-                        {/* --- TAB: TRENDS --- */}
-                        {activeTab === 'trends' && (
-                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-                                <div className="p-6 bg-slate-800/50 border border-slate-700 rounded-2xl text-center">
-                                    <h3 className="text-xl font-bold text-slate-200 mb-2">Comparativa Anual & Presupuestos</h3>
-                                    <p className="text-slate-400 mb-2">Visualiza cómo se compara tu "Yo Actual" vs "Yo del Pasado".</p>
-                                    <p className="text-sm text-cyan-400 mb-6">📅 Mostrando: {dateRange.start} al {dateRange.end}</p>
+                        {/* --- TAB: TRENDS (Redesigned) --- */}
+                        {activeTab === 'trends' && (() => {
+                            // Calculate period comparison and daily data
+                            const startDate = new Date(dateRange.start);
+                            const endDate = new Date(dateRange.end);
+                            const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
 
-                                    <div className="h-[400px]">
-                                        {barData.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <LineChart data={forecast.length > 0 ? forecast : barData}>
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                                                    <XAxis dataKey="month" stroke="#94a3b8" tickFormatter={formatMonth} />
-                                                    <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} />
-                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
-                                                    <Legend />
-                                                    <Line type="monotone" dataKey="gasto" name="Gastos Históricos" stroke="#f87171" strokeWidth={3} dot={{ r: 4 }} />
-                                                    <Line type="monotone" dataKey="gasto_proyectado" name="Proyección (IA)" stroke="#a78bfa" strokeWidth={3} strokeDasharray="5 5" dot={{ r: 4 }} />
-                                                </LineChart>
-                                            </ResponsiveContainer>
-                                        ) : (
-                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                                                No hay datos históricos para tendencias
-                                            </div>
-                                        )}
+                            // Current period totals
+                            const currentIncome = barData.reduce((sum, d) => sum + (d.ingreso || 0), 0);
+                            const currentExpense = barData.reduce((sum, d) => sum + (d.gasto || 0), 0);
+                            const currentNet = currentIncome - currentExpense;
+
+                            // Previous period (same duration, just before)
+                            const prevStart = new Date(startDate);
+                            prevStart.setDate(prevStart.getDate() - daysDiff);
+                            const prevEnd = new Date(startDate);
+                            prevEnd.setDate(prevEnd.getDate() - 1);
+
+                            // For comparison, we'd need to fetch previous period data
+                            // For now, show current period analysis
+                            const avgDailyExpense = currentExpense / daysDiff;
+                            const avgDailyIncome = currentIncome / daysDiff;
+
+                            return (
+                                <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+                                    {/* Period Summary Cards */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                            <h4 className="text-slate-400 text-sm mb-2">📅 Periodo Analizado</h4>
+                                            <p className="text-white text-lg font-bold">{dateRange.start}</p>
+                                            <p className="text-slate-500 text-sm">al {dateRange.end}</p>
+                                            <p className="text-cyan-400 text-sm mt-2">{daysDiff} días</p>
+                                        </div>
+
+                                        <div className="bg-slate-800/50 p-6 rounded-2xl border border-emerald-700/50">
+                                            <h4 className="text-emerald-400 text-sm mb-2">💰 Total Ingresos</h4>
+                                            <p className="text-emerald-400 text-2xl font-bold">{fmt(currentIncome)}</p>
+                                            <p className="text-slate-500 text-sm mt-2">
+                                                Promedio diario: {fmt(avgDailyIncome)}
+                                            </p>
+                                        </div>
+
+                                        <div className="bg-slate-800/50 p-6 rounded-2xl border border-rose-700/50">
+                                            <h4 className="text-rose-400 text-sm mb-2">💸 Total Gastos</h4>
+                                            <p className="text-rose-400 text-2xl font-bold">{fmt(currentExpense)}</p>
+                                            <p className="text-slate-500 text-sm mt-2">
+                                                Promedio diario: {fmt(avgDailyExpense)}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <p className="text-xs text-slate-500 mt-4">* Proyección basada en regresión lineal simple de tus gastos históricos.</p>
+
+                                    {/* Net Balance Card */}
+                                    <div className={`p-6 rounded-2xl border ${currentNet >= 0 ? 'bg-emerald-900/20 border-emerald-700/50' : 'bg-rose-900/20 border-rose-700/50'}`}>
+                                        <div className="flex justify-between items-center">
+                                            <div>
+                                                <h4 className="text-slate-300 text-sm mb-1">Balance Neto del Periodo</h4>
+                                                <p className={`text-3xl font-bold ${currentNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                    {currentNet >= 0 ? '+' : ''}{fmt(currentNet)}
+                                                </p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-slate-400 text-sm">
+                                                    {currentNet >= 0
+                                                        ? '✅ Superávit - ¡Bien hecho!'
+                                                        : '⚠️ Déficit - Revisa tus gastos'}
+                                                </p>
+                                                <p className="text-slate-500 text-xs mt-1">
+                                                    Tasa de ahorro: {currentIncome > 0 ? ((currentNet / currentIncome) * 100).toFixed(1) : 0}%
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Monthly Trend Chart */}
+                                    <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                        <h3 className="text-lg font-bold text-slate-200 mb-4">📊 Evolución Mensual</h3>
+                                        <div className="h-[300px]">
+                                            {barData.length > 0 ? (
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={barData}>
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                                                        <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
+                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 12 }} />
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
+                                                            formatter={(val) => fmt(val)}
+                                                        />
+                                                        <Legend />
+                                                        <Bar dataKey="ingreso" name="Ingresos" fill="#34d399" radius={[4, 4, 0, 0]} />
+                                                        <Bar dataKey="gasto" name="Gastos" fill="#f87171" radius={[4, 4, 0, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            ) : (
+                                                <div className="h-full flex items-center justify-center text-slate-500">
+                                                    No hay datos para el periodo seleccionado
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
-                        )}
+                            );
+                        })()}
 
                         {/* --- TAB: BREAKDOWN --- */}
                         {activeTab === 'breakdown' && (
