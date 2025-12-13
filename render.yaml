@@ -10,4 +10,6 @@ services:
         value: PROD
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: DATABASE_URL
+        value: postgresql://postgres:72143306Sfmm!@db.ijwmxgnfilnihiizozdg.supabase.co:5432/postgres
     rootDir: app/backend

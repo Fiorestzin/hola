@@ -12,6 +12,14 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 from typing import Optional
 
+# PostgreSQL support
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_POSTGRES = True
+except ImportError:
+    HAS_POSTGRES = False
+
 # --- AUTH CONFIG ---
 SECRET_KEY = "fiorestzin-super-secret-key-change-in-prod"  # Change this in production!
 ALGORITHM = "HS256"
@@ -31,8 +39,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CONFIGURATION & ENV ---
-# --- CONFIGURATION & ENV ---
+# --- DATABASE CONFIGURATION ---
+# Check for PostgreSQL DATABASE_URL (Supabase/Render)
+DATABASE_URL = os.getenv("DATABASE_URL")
+USE_POSTGRES = DATABASE_URL is not None and HAS_POSTGRES
+
+# SQLite fallback config
 class GlobalConfig:
     ENV = os.getenv("FINANCE_ENV", "TEST").upper()
     DB_FILENAME = "finance_prod.db" if ENV == "PROD" else "finance_test.db"
@@ -43,19 +55,57 @@ def update_db_path():
     config.DB_FILENAME = "finance_prod.db" if config.ENV == "PROD" else "finance_test.db"
     print(f"SWITCHED TO: {config.ENV} ({config.DB_FILENAME})")
 
-DB_PATH = os.path.join(os.path.dirname(__file__), config.DB_FILENAME) # Initial path
+DB_PATH = os.path.join(os.path.dirname(__file__), config.DB_FILENAME)
 
 def get_db_path():
     return os.path.join(os.path.dirname(__file__), config.DB_FILENAME)
 
 print(f"\nSTARTING FINANCE BACKEND")
-print(f"ENVIRONMENT: {config.ENV}")
-print(f"DATABASE:    {config.DB_FILENAME}\n")
+if USE_POSTGRES:
+    print(f"DATABASE: PostgreSQL (Supabase)")
+else:
+    print(f"ENVIRONMENT: {config.ENV}")
+    print(f"DATABASE: SQLite ({config.DB_FILENAME})")
+print("")
 
 def get_db_connection():
-    conn = sqlite3.connect(get_db_path())
-    conn.row_factory = sqlite3.Row # Access columns by name
-    return conn
+    if USE_POSTGRES:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    else:
+        conn = sqlite3.connect(get_db_path())
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def execute_query(conn, query, params=None):
+    """Execute a query and return cursor - handles both SQLite and PostgreSQL"""
+    cursor = conn.cursor()
+    if params:
+        cursor.execute(query, params)
+    else:
+        cursor.execute(query)
+    return cursor
+
+def fetchall_as_dict(cursor):
+    """Fetch all rows as list of dicts - handles both SQLite and PostgreSQL"""
+    if USE_POSTGRES:
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+    else:
+        return [dict(row) for row in cursor.fetchall()]
+
+def fetchone_as_dict(cursor):
+    """Fetch one row as dict"""
+    if USE_POSTGRES:
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        columns = [desc[0] for desc in cursor.description]
+        return dict(zip(columns, row))
+    else:
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     
 class ConfigUpdate(BaseModel):
     env: str
@@ -517,86 +567,155 @@ def delete_transaction(tx_id: int):
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
-    # Create Transactions Table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT,
-            tipo TEXT,
-            categoria TEXT,
-            detalle TEXT,
-            banco TEXT,
-            monto REAL,
-            ingreso REAL,
-            gasto REAL
-        )
-    ''')
-
-    # Create Budgets Table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS budgets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT NOT NULL,
-            amount REAL NOT NULL,
-            month TEXT NOT NULL,
-            UNIQUE(category, month)
-        )
-    ''')
     
-    # Create Categories Table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            tipo TEXT DEFAULT 'Gasto'
-        )
-    ''')
-    
-    # Check if categories exist, if not add defaults
-    cursor.execute('SELECT count(*) FROM categories')
-    if cursor.fetchone()[0] == 0:
-        defaults = [
-            ('Alimentación', 'Gasto'), ('Transporte', 'Gasto'), ('Vivienda', 'Gasto'),
-            ('Salud', 'Gasto'), ('Ocio', 'Gasto'), ('Sueldo', 'Ingreso'),
-            ('Regalos', 'Gasto'), ('Educación', 'Gasto'), ('Inversiones', 'Gasto')
-        ]
-        cursor.executemany('INSERT INTO categories (nombre, tipo) VALUES (?, ?)', defaults)
-    
-    # Create Banks Table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS banks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL UNIQUE
-        )
-    ''')
-    
-    # Check if banks exist, if not add defaults
-    cursor.execute('SELECT count(*) FROM banks')
-    if cursor.fetchone()[0] == 0:
-        default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',), ('Scotiabank',), ('Estado',), ('Falabella',)]
-        cursor.executemany('INSERT INTO banks (nombre) VALUES (?)', default_banks)
-    
-    # Create Users Table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            hashed_password TEXT NOT NULL,
-            is_admin INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Seed default admin user if none exists (password: fiorestzin)
-    cursor.execute('SELECT count(*) FROM users')
-    if cursor.fetchone()[0] == 0:
-        hashed_pwd = ph.hash("fiorestzin")
-        cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (?, ?, ?)', 
-                      ("admin", hashed_pwd, 1))
-        print("Created default admin user: admin / fiorestzin")
+    # SQL syntax differs between SQLite and PostgreSQL
+    if USE_POSTGRES:
+        # PostgreSQL syntax
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id SERIAL PRIMARY KEY,
+                fecha TEXT,
+                tipo TEXT,
+                categoria TEXT,
+                detalle TEXT,
+                banco TEXT,
+                monto REAL,
+                ingreso REAL,
+                gasto REAL
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budgets (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                month TEXT NOT NULL,
+                UNIQUE(category, month)
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS categories (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                tipo TEXT DEFAULT 'Gasto'
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS banks (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL UNIQUE
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                hashed_password TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0
+            )
+        ''')
+        
+        # Check and seed defaults for PostgreSQL
+        cursor.execute('SELECT count(*) FROM categories')
+        if cursor.fetchone()[0] == 0:
+            defaults = [
+                ('Alimentación', 'Gasto'), ('Transporte', 'Gasto'), ('Vivienda', 'Gasto'),
+                ('Salud', 'Gasto'), ('Ocio', 'Gasto'), ('Sueldo', 'Ingreso'),
+                ('Regalos', 'Gasto'), ('Educación', 'Gasto'), ('Inversiones', 'Gasto')
+            ]
+            for nombre, tipo in defaults:
+                cursor.execute('INSERT INTO categories (nombre, tipo) VALUES (%s, %s)', (nombre, tipo))
+        
+        cursor.execute('SELECT count(*) FROM banks')
+        if cursor.fetchone()[0] == 0:
+            default_banks = ['Santander', 'Banco de Chile', 'Efectivo', 'Scotiabank', 'Estado', 'Falabella']
+            for banco in default_banks:
+                cursor.execute('INSERT INTO banks (nombre) VALUES (%s)', (banco,))
+        
+        cursor.execute('SELECT count(*) FROM users')
+        if cursor.fetchone()[0] == 0:
+            hashed_pwd = ph.hash("fiorestzin")
+            cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (%s, %s, %s)', 
+                          ("admin", hashed_pwd, 1))
+            print("Created default admin user: admin / fiorestzin")
+    else:
+        # SQLite syntax
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                tipo TEXT,
+                categoria TEXT,
+                detalle TEXT,
+                banco TEXT,
+                monto REAL,
+                ingreso REAL,
+                gasto REAL
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                month TEXT NOT NULL,
+                UNIQUE(category, month)
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                tipo TEXT DEFAULT 'Gasto'
+            )
+        ''')
+        
+        cursor.execute('SELECT count(*) FROM categories')
+        if cursor.fetchone()[0] == 0:
+            defaults = [
+                ('Alimentación', 'Gasto'), ('Transporte', 'Gasto'), ('Vivienda', 'Gasto'),
+                ('Salud', 'Gasto'), ('Ocio', 'Gasto'), ('Sueldo', 'Ingreso'),
+                ('Regalos', 'Gasto'), ('Educación', 'Gasto'), ('Inversiones', 'Gasto')
+            ]
+            cursor.executemany('INSERT INTO categories (nombre, tipo) VALUES (?, ?)', defaults)
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS banks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL UNIQUE
+            )
+        ''')
+        
+        cursor.execute('SELECT count(*) FROM banks')
+        if cursor.fetchone()[0] == 0:
+            default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',), ('Scotiabank',), ('Estado',), ('Falabella',)]
+            cursor.executemany('INSERT INTO banks (nombre) VALUES (?)', default_banks)
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                hashed_password TEXT NOT NULL,
+                is_admin INTEGER DEFAULT 0
+            )
+        ''')
+        
+        cursor.execute('SELECT count(*) FROM users')
+        if cursor.fetchone()[0] == 0:
+            hashed_pwd = ph.hash("fiorestzin")
+            cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (?, ?, ?)', 
+                          ("admin", hashed_pwd, 1))
+            print("Created default admin user: admin / fiorestzin")
     
     conn.commit()
-    
     conn.close()
+
 
 # Initialize on startup
 init_db()
