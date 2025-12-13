@@ -143,20 +143,91 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
         fetchDrillDown({ category }, `Gastos en ${category}`);
     };
 
-    const handleBarClick = (data) => {
+    const handleBarClick = (data, index, event) => {
         if (!data || !data.activePayload) return;
+
         const payload = data.activePayload[0].payload;
         const monthStr = payload.month;
         if (monthStr === 'Desconocido') return;
 
+        // Detect which bar was clicked based on the dataKey
+        const clickedBar = data.activeTooltipIndex !== undefined && data.activePayload.length > 0
+            ? data.activePayload.find(p => {
+                // Check which bar's area contains the click
+                const xPos = event?.nativeEvent?.offsetX || 0;
+                return p.dataKey; // We'll use a different approach
+            })
+            : null;
+
+        // Use the actual click target - determine from the color or position
+        // Simpler: detect from the tooltip index and bar names
+        let tipoFilter = null;
+        let tipoTitle = '';
+
+        // Check if clicked on Ingreso or Gasto bar based on activeLabel or use tooltip
+        // For grouped bars, we need to check which specific bar was clicked
+        if (data.activePayload.length >= 2) {
+            // Check mouse position relative to bars - simpler: let user click and show both
+            // But user wants specific filtering, so let's add separate click handlers via Bar onClick
+            tipoFilter = null; // Will show all for now, we'll add bar-specific handlers
+        }
+
         const [year, month] = monthStr.split('-');
         const startDate = `${year}-${month}-01`;
-        // Last day of month
         const lastDay = new Date(year, month, 0).getDate();
         const endDate = `${year}-${month}-${lastDay}`;
 
         setDdEvolution([]);
         fetchDrillDown({ start_date: startDate, end_date: endDate }, `Resumen ${formatMonth(monthStr)}`);
+    };
+
+    // Separate handlers for each bar type
+    const handleIngresoBarClick = (data, monthStr) => {
+        if (!monthStr || monthStr === 'Desconocido') return;
+
+        const [year, month] = monthStr.split('-');
+        const startDate = `${year}-${month}-01`;
+        const lastDay = new Date(year, month, 0).getDate();
+        const endDate = `${year}-${month}-${lastDay}`;
+
+        setDdEvolution([]);
+        // Filter by detalle containing ingreso-related or by tipo
+        fetchDrillDownByType(startDate, endDate, 'Ingreso', `Ingresos ${formatMonth(monthStr)}`);
+    };
+
+    const handleGastoBarClick = (data, monthStr) => {
+        if (!monthStr || monthStr === 'Desconocido') return;
+
+        const [year, month] = monthStr.split('-');
+        const startDate = `${year}-${month}-01`;
+        const lastDay = new Date(year, month, 0).getDate();
+        const endDate = `${year}-${month}-${lastDay}`;
+
+        setDdEvolution([]);
+        fetchDrillDownByType(startDate, endDate, 'Gasto', `Gastos ${formatMonth(monthStr)}`);
+    };
+
+    const fetchDrillDownByType = async (startDate, endDate, tipo, title) => {
+        try {
+            const params = new URLSearchParams({
+                start_date: startDate,
+                end_date: endDate,
+                limit: 0
+            });
+            const res = await fetch(`${API_URL}/transactions?${params}`);
+            const json = await res.json();
+
+            // Filter by tipo (Ingreso has ingreso > 0, Gasto has gasto > 0)
+            const filtered = json.filter(tx =>
+                tipo === 'Ingreso' ? tx.ingreso > 0 : tx.gasto > 0
+            );
+
+            setDdTransactions(filtered);
+            setDdTitle(title);
+            setDdOpen(true);
+        } catch (error) {
+            console.error("Drilldown error:", error);
+        }
     };
 
     const handleTopItemClick = async (data) => {
@@ -399,8 +470,22 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
                                                         cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
                                                     />
                                                     <Legend />
-                                                    <Bar dataKey="ingreso" name="Ingresos" fill="#34d399" radius={[4, 4, 0, 0]} />
-                                                    <Bar dataKey="gasto" name="Gastos" fill="#f87171" radius={[4, 4, 0, 0]} />
+                                                    <Bar
+                                                        dataKey="ingreso"
+                                                        name="Ingresos"
+                                                        fill="#34d399"
+                                                        radius={[4, 4, 0, 0]}
+                                                        onClick={(data) => handleIngresoBarClick(data, data?.month)}
+                                                        className="cursor-pointer hover:opacity-80"
+                                                    />
+                                                    <Bar
+                                                        dataKey="gasto"
+                                                        name="Gastos"
+                                                        fill="#f87171"
+                                                        radius={[4, 4, 0, 0]}
+                                                        onClick={(data) => handleGastoBarClick(data, data?.month)}
+                                                        className="cursor-pointer hover:opacity-80"
+                                                    />
                                                 </BarChart>
                                             </ResponsiveContainer>
                                         ) : (
