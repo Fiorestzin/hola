@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2 } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
 import AdvancedReports from './components/AdvancedReports';
@@ -60,6 +60,21 @@ function App() {
     localStorage.removeItem("token");
     setToken(null);
     setIsAuthenticated(false);
+  };
+
+  const handleDeleteTransaction = async (txId) => {
+    if (!confirm('¿Eliminar esta transacción?')) return;
+    try {
+      const res = await fetch(`${API_URL}/transaction/${txId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setTransactions(transactions.filter(tx => tx.id !== txId));
+      } else {
+        alert('Error al eliminar');
+      }
+    } catch (e) {
+      console.error('Delete failed:', e);
+      alert('Error al eliminar');
+    }
   };
 
   // Fetch data function (defined before hooks)
@@ -230,7 +245,8 @@ function App() {
                     <th className="pb-3 pl-2">Fecha</th>
                     <th className="pb-3">Detalle</th>
                     <th className="pb-3 hidden md:table-cell">Categoría</th>
-                    <th className="pb-3 text-right pr-2">Monto</th>
+                    <th className="pb-3 text-right">Monto</th>
+                    <th className="pb-3 text-center pr-2">🗑️</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
@@ -243,9 +259,18 @@ function App() {
                           {tx.categoria}
                         </span>
                       </td>
-                      <td className={`py-3 text-right pr-2 font-bold ${tx.ingreso > 0 ? 'text-emerald-400' : 'text-rose-400'
+                      <td className={`py-3 text-right font-bold ${tx.ingreso > 0 ? 'text-emerald-400' : 'text-rose-400'
                         }`}>
                         {tx.ingreso > 0 ? `+ ${fmt(tx.ingreso)}` : `- ${fmt(tx.gasto)}`}
+                      </td>
+                      <td className="py-3 text-center pr-2">
+                        <button
+                          onClick={() => handleDeleteTransaction(tx.id)}
+                          className="text-slate-500 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </td>
                     </tr>
                   ))}

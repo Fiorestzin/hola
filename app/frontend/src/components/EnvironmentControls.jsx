@@ -91,13 +91,24 @@ export function EnvironmentControls() {
             </button>
 
             {isOpen && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm">
-                    <div className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-md shadow-2xl border border-slate-700">
+                <div
+                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm"
+                    onClick={() => setIsOpen(false)}
+                >
+                    <div
+                        className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-md shadow-2xl border border-slate-700"
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                 <Settings className="text-blue-400" /> Configuración de Entorno
                             </h2>
-                            <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-white">✕</button>
+                            <button
+                                onClick={() => setIsOpen(false)}
+                                className="text-slate-400 hover:text-white text-2xl font-bold hover:bg-slate-700 rounded-lg w-8 h-8 flex items-center justify-center transition-colors"
+                            >
+                                ✕
+                            </button>
                         </div>
 
                         <div className="space-y-6">

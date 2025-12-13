@@ -430,6 +430,24 @@ def create_transaction(tx: Transaction):
         raise HTTPException(status_code=500, detail=f"{str(e)} | Tr: {traceback.format_exc()}")
 
 
+@app.delete("/transaction/{tx_id}")
+def delete_transaction(tx_id: int):
+    """Delete a specific transaction by ID"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if transaction exists
+    cursor.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": f"Transaction {tx_id} deleted"}
+
+
 # Ensure database schema includes categories
 def init_db():
     conn = get_db_connection()
