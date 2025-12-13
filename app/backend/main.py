@@ -259,8 +259,6 @@ def get_transactions(
 ):
     conn = get_db_connection()
     
-    # ... (skipping the commented out old code for brevity if possible, or just rewriting clean)
-    
     real_query = "SELECT * FROM transactions WHERE 1=1"
     real_params = []
     
@@ -280,15 +278,22 @@ def get_transactions(
         real_query += " AND detalle = ?"
         real_params.append(detalle)
         
-    real_query += " ORDER BY fecha DESC, rowid DESC"
+    real_query += " ORDER BY fecha DESC, id DESC"
     
     if limit > 0:
         real_query += " LIMIT ?"
         real_params.append(limit)
 
-    t = conn.execute(real_query, real_params).fetchall()
+    cursor = conn.cursor()
+    cursor.execute(sql_param(real_query), real_params)
+    rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in t]
+    
+    if USE_POSTGRES:
+        columns = ['id', 'fecha', 'tipo', 'categoria', 'detalle', 'banco', 'monto', 'ingreso', 'gasto']
+        return [dict(zip(columns, row)) for row in rows]
+    return [dict(row) for row in rows]
+
 
 @app.get("/summary/banks")
 def get_bank_balances():
@@ -305,9 +310,15 @@ def get_bank_balances():
         GROUP BY banco
         ORDER BY saldo DESC
     '''
-    rows = conn.execute(query).fetchall()
+    cursor = conn.cursor()
+    cursor.execute(query)
+    rows = cursor.fetchall()
     conn.close()
+    
+    if USE_POSTGRES:
+        return [{"banco": row[0], "total_ingreso": row[1], "total_gasto": row[2], "saldo": row[3]} for row in rows]
     return [dict(row) for row in rows]
+
 
 @app.get("/reports")
 def get_reports(start_date: str = None, end_date: str = None):
@@ -331,24 +342,24 @@ def get_reports(start_date: str = None, end_date: str = None):
         GROUP BY categoria
         ORDER BY value DESC
     '''
-    cat_data = conn.execute(cat_query, params).fetchall()
+    cursor = conn.cursor()
+    cursor.execute(sql_param(cat_query), params)
+    cat_rows = cursor.fetchall()
+    
+    if USE_POSTGRES:
+        cat_data = [{"name": row[0], "value": row[1]} for row in cat_rows]
+    else:
+        cat_data = [dict(row) for row in cat_rows]
 
     # 2. Monthly History (Bar Chart)
-    # We need to extract month from fecha. 
-    # Assuming fecha is YYYY-MM-DD or similar standard for sorting to work best, 
-    # but since data is messy, we might need python processing if SQL fails.
-    # SQLite has strftime but text dates must be formatted correctly.
-    # Let's try basic substr if format is YYYY-MM-DD, otherwise raw pandas.
-    
     hist_query = f"SELECT fecha, ingreso, gasto FROM transactions WHERE {where_clause}"
-    df = pd.read_sql_query(hist_query, conn, params=params)
+    df = pd.read_sql_query(sql_param(hist_query), conn, params=params)
     
     history_data = []
     if not df.empty:
         try:
-            df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False) # standard ISO preference
+            df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False)
             df['month'] = df['dt'].dt.strftime('%Y-%m')
-            # Fallback for weird dates
             df['month'] = df['month'].fillna('Desconocido')
             
             grp = df.groupby('month')[['ingreso', 'gasto']].sum().reset_index()
@@ -359,9 +370,10 @@ def get_reports(start_date: str = None, end_date: str = None):
     conn.close()
     
     return {
-        "pie_data": [dict(row) for row in cat_data],
+        "pie_data": cat_data,
         "bar_data": history_data
     }
+
 
 
 @app.get("/comparison")
@@ -542,10 +554,10 @@ def create_transaction(tx: Transaction):
         
     try:
         print(f"DEBUG TRYING INSERT: {tx.fecha}, {tx.tipo}, {tx.categoria}, {tx.detalle}, {tx.banco}, {ingreso}, {gasto}, {tx.monto}")
-        cursor.execute('''
+        cursor.execute(sql_param('''
             INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto))
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto))
         
         conn.commit()
         conn.close()
@@ -564,15 +576,16 @@ def delete_transaction(tx_id: int):
     cursor = conn.cursor()
     
     # Check if transaction exists
-    cursor.execute("SELECT id FROM transactions WHERE id = ?", (tx_id,))
+    cursor.execute(sql_param("SELECT id FROM transactions WHERE id = ?"), (tx_id,))
     if not cursor.fetchone():
         conn.close()
         raise HTTPException(status_code=404, detail="Transaction not found")
     
-    cursor.execute("DELETE FROM transactions WHERE id = ?", (tx_id,))
+    cursor.execute(sql_param("DELETE FROM transactions WHERE id = ?"), (tx_id,))
     conn.commit()
     conn.close()
     return {"status": "ok", "message": f"Transaction {tx_id} deleted"}
+
 
 
 # Ensure database schema includes categories
@@ -739,15 +752,20 @@ class Category(BaseModel):
 @app.get("/categories")
 def get_categories():
     conn = get_db_connection()
-    cats = conn.execute("SELECT * FROM categories ORDER BY nombre").fetchall()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre, tipo FROM categories ORDER BY nombre")
+    rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in cats]
+    if USE_POSTGRES:
+        return [{"id": row[0], "nombre": row[1], "tipo": row[2]} for row in rows]
+    return [dict(row) for row in rows]
 
 @app.post("/categories")
 def create_category(cat: Category):
     conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        conn.execute("INSERT INTO categories (nombre, tipo) VALUES (?, ?)", (cat.nombre, cat.tipo))
+        cursor.execute(sql_param("INSERT INTO categories (nombre, tipo) VALUES (?, ?)"), (cat.nombre, cat.tipo))
         conn.commit()
     except Exception as e:
         conn.close()
@@ -758,10 +776,12 @@ def create_category(cat: Category):
 @app.delete("/categories/{cat_id}")
 def delete_category(cat_id: int):
     conn = get_db_connection()
-    conn.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    cursor = conn.cursor()
+    cursor.execute(sql_param("DELETE FROM categories WHERE id = ?"), (cat_id,))
     conn.commit()
     conn.close()
     return {"status": "ok", "message": "Category deleted"}
+
 
 
 # --- Bank Management ---
@@ -772,15 +792,20 @@ class Bank(BaseModel):
 @app.get("/banks")
 def get_banks():
     conn = get_db_connection()
-    banks = conn.execute("SELECT * FROM banks ORDER BY nombre").fetchall()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, nombre FROM banks ORDER BY nombre")
+    rows = cursor.fetchall()
     conn.close()
-    return [dict(row) for row in banks]
+    if USE_POSTGRES:
+        return [{"id": row[0], "nombre": row[1]} for row in rows]
+    return [dict(row) for row in rows]
 
 @app.post("/banks")
 def create_bank(bank: Bank):
     conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        conn.execute("INSERT INTO banks (nombre) VALUES (?)", (bank.nombre,))
+        cursor.execute(sql_param("INSERT INTO banks (nombre) VALUES (?)"), (bank.nombre,))
         conn.commit()
     except Exception as e:
         conn.close()
@@ -791,10 +816,12 @@ def create_bank(bank: Bank):
 @app.delete("/banks/{bank_id}")
 def delete_bank(bank_id: int):
     conn = get_db_connection()
-    conn.execute("DELETE FROM banks WHERE id = ?", (bank_id,))
+    cursor = conn.cursor()
+    cursor.execute(sql_param("DELETE FROM banks WHERE id = ?"), (bank_id,))
     conn.commit()
     conn.close()
     return {"status": "ok", "message": "Bank deleted"}
+
 
 
 # --- Budget Management ---
