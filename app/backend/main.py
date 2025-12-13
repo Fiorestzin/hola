@@ -94,6 +94,12 @@ def fetchall_as_dict(cursor):
     else:
         return [dict(row) for row in cursor.fetchall()]
 
+def sql_param(query: str) -> str:
+    """Convert SQLite ? placeholders to PostgreSQL %s"""
+    if USE_POSTGRES:
+        return query.replace("?", "%s")
+    return query
+
 def fetchone_as_dict(cursor):
     """Fetch one row as dict"""
     if USE_POSTGRES:
@@ -164,10 +170,16 @@ def verify_password(plain_password, hashed_password):
 def get_user(username: str):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
-    user = cursor.fetchone()
+    cursor.execute(sql_param("SELECT id, username, hashed_password, is_admin FROM users WHERE username = ?"), (username,))
+    row = cursor.fetchone()
     conn.close()
-    return user
+    if row is None:
+        return None
+    # Convert to dict for both SQLite and PostgreSQL
+    if USE_POSTGRES:
+        return {"id": row[0], "username": row[1], "hashed_password": row[2], "is_admin": row[3]}
+    return dict(row)
+
 
 def authenticate_user(username: str, password: str):
     user = get_user(username)
