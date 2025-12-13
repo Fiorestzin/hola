@@ -870,7 +870,7 @@ class Budget(BaseModel):
     month: str # YYYY-MM
 
 @app.get("/budgets")
-def get_budgets(month: str = None):
+def get_budgets(month: str = None, environment: str = "TEST"):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -901,15 +901,15 @@ def get_budgets(month: str = None):
             sum_query = '''
                 SELECT COALESCE(SUM(gasto), 0) 
                 FROM transactions 
-                WHERE categoria = %s AND LEFT(fecha, 7) = %s
+                WHERE categoria = %s AND LEFT(fecha, 7) = %s AND environment = %s
             '''
         else:
             sum_query = '''
                 SELECT COALESCE(SUM(gasto), 0) 
                 FROM transactions 
-                WHERE categoria = ? AND strftime('%Y-%m', fecha) = ?
+                WHERE categoria = ? AND strftime('%Y-%m', fecha) = ? AND environment = ?
             '''
-        cursor.execute(sum_query, (cat, m))
+        cursor.execute(sum_query, (cat, m, environment))
         spent = cursor.fetchone()[0] or 0
         b['spent'] = spent
         b['percentage'] = (spent / b['amount']) * 100 if b['amount'] > 0 else 0

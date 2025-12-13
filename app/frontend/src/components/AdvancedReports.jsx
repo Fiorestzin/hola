@@ -775,7 +775,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         {/* --- TAB: BUDGETS --- */}
                         {activeTab === 'budgets' && (
                             <div className="animate-in fade-in zoom-in duration-300">
-                                <BudgetManager isOpen={true} />
+                                <BudgetManager isOpen={true} environment={environment} />
                             </div>
                         )}
 

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Save, Trash2, Plus, Target } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function BudgetManager({ isOpen, onClose }) {
+export default function BudgetManager({ isOpen, onClose, environment }) {
     const [categories, setCategories] = useState([]);
     const [budgets, setBudgets] = useState([]);
     const [formData, setFormData] = useState({ category: '', amount: '' });
@@ -16,7 +16,7 @@ export default function BudgetManager({ isOpen, onClose }) {
             fetchCategories();
             fetchBudgets();
         }
-    }, [isOpen]);
+    }, [isOpen, environment]);
 
     const fetchCategories = async () => {
         try {
@@ -31,7 +31,11 @@ export default function BudgetManager({ isOpen, onClose }) {
     const fetchBudgets = async () => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_URL}/budgets?month=${currentMonth}`);
+            const query = new URLSearchParams({
+                month: currentMonth,
+                environment: environment || 'TEST'
+            });
+            const res = await fetch(`${API_URL}/budgets?${query}`);
             const data = await res.json();
             setBudgets(data);
         } catch (e) {
