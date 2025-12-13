@@ -391,6 +391,7 @@ def get_period_comparison(start_date: str, end_date: str):
     prev_start = prev_end - timedelta(days=days_diff - 1)
     
     conn = get_db_connection()
+    cursor = conn.cursor()
     
     def get_period_totals(start, end):
         query = '''
@@ -401,7 +402,8 @@ def get_period_comparison(start_date: str, end_date: str):
             FROM transactions 
             WHERE fecha >= ? AND fecha <= ?
         '''
-        result = conn.execute(query, (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))).fetchone()
+        cursor.execute(sql_param(query), (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+        result = cursor.fetchone()
         return {
             "ingreso": result[0] or 0,
             "gasto": result[1] or 0,
@@ -419,6 +421,7 @@ def get_period_comparison(start_date: str, end_date: str):
         return round(((current - previous) / previous) * 100, 1)
     
     conn.close()
+
     
     return {
         "current": {
@@ -443,6 +446,7 @@ def get_period_comparison(start_date: str, end_date: str):
 @app.get("/analysis")
 def get_analysis(start_date: str = None, end_date: str = None):
     conn = get_db_connection()
+    cursor = conn.cursor()
     
     where_clause = "1=1"
     params = []
@@ -462,10 +466,10 @@ def get_analysis(start_date: str = None, end_date: str = None):
         ORDER BY value DESC
         LIMIT 10
     '''
-    top_items = conn.execute(top_items_query, params).fetchall()
+    cursor.execute(sql_param(top_items_query), params)
+    top_rows = cursor.fetchall()
     
     # 2. Payment Methods / Bank Balances (net balance: ingreso - gasto)
-    # Shows the actual balance contribution of each bank
     payment_methods_query = f'''
         SELECT banco as name, (SUM(ingreso) - SUM(gasto)) as value
         FROM transactions
@@ -473,14 +477,21 @@ def get_analysis(start_date: str = None, end_date: str = None):
         GROUP BY banco
         ORDER BY value DESC
     '''
-    payment_methods = conn.execute(payment_methods_query, params).fetchall()
+    cursor.execute(sql_param(payment_methods_query), params)
+    payment_rows = cursor.fetchall()
     
     conn.close()
     
+    if USE_POSTGRES:
+        return {
+            "top_expenses": [{"name": row[0], "value": row[1]} for row in top_rows],
+            "payment_methods": [{"name": row[0], "value": row[1]} for row in payment_rows]
+        }
     return {
-        "top_expenses": [dict(row) for row in top_items],
-        "payment_methods": [dict(row) for row in payment_methods]
+        "top_expenses": [dict(row) for row in top_rows],
+        "payment_methods": [dict(row) for row in payment_rows]
     }
+
 
 @app.get("/history")
 def get_history(
@@ -491,7 +502,7 @@ def get_history(
 ):
     conn = get_db_connection()
     
-    # Validate column to prevent injection (though params handle values)
+    # Validate column to prevent injection
     if filter_col not in ['detalle', 'categoria', 'banco']:
         raise HTTPException(status_code=400, detail="Invalid filter column")
 
@@ -509,25 +520,25 @@ def get_history(
         where_clause += f" AND {filter_col} = ?"
         params.append(filter_val)
 
-    # We want monthly evolution of expenses for this specific item/category
-    # Reuse the logic for extraction of YYYY-MM
-    df = pd.read_sql_query(f"SELECT fecha, gasto FROM transactions WHERE {where_clause} AND gasto > 0", conn, params=params)
+    # Monthly evolution of expenses
+    query = f"SELECT fecha, gasto FROM transactions WHERE {where_clause} AND gasto > 0"
+    df = pd.read_sql_query(sql_param(query), conn, params=params)
     
     history_data = []
     if not df.empty:
         try:
             df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False)
             df['month'] = df['dt'].dt.strftime('%Y-%m')
-             # Fallback
             df['month'] = df['month'].fillna('Desconocido')
             
             grp = df.groupby('month')['gasto'].sum().reset_index()
             history_data = grp.sort_values('month').to_dict(orient='records')
         except:
-             pass
+            pass
 
     conn.close()
     return history_data
+
 
 class Transaction(BaseModel):
     fecha: str
