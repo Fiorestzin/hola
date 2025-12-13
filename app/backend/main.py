@@ -845,7 +845,9 @@ class Budget(BaseModel):
 @app.get("/budgets")
 def get_budgets(month: str = None):
     conn = get_db_connection()
-    query = "SELECT * FROM budgets WHERE 1=1"
+    cursor = conn.cursor()
+    
+    query = "SELECT id, category, amount, month FROM budgets WHERE 1=1"
     params = []
     
     if month:
@@ -853,26 +855,35 @@ def get_budgets(month: str = None):
         params.append(month)
         
     query += " ORDER BY month DESC, category ASC"
-    rows = conn.execute(query, params).fetchall()
+    cursor.execute(sql_param(query), params)
+    rows = cursor.fetchall()
     
     # Calculate progress for each budget
-    # We need to sum actual expenses for that category/month
-    # This is inefficient N+1 but acceptable for small scale
     budgets_with_progress = []
     for r in rows:
-        b = dict(r)
-        # Sum expenses for this category and month
-        # month is YYYY-MM
+        if USE_POSTGRES:
+            b = {"id": r[0], "category": r[1], "amount": r[2], "month": r[3]}
+        else:
+            b = dict(r)
+        
         cat = b['category']
         m = b['month']
         
-        # SQL to sum expenses
-        sum_query = '''
-            SELECT SUM(gasto) 
-            FROM transactions 
-            WHERE categoria = ? AND strftime('%Y-%m', fecha) = ?
-        '''
-        spent = conn.execute(sum_query, (cat, m)).fetchone()[0] or 0
+        # SQL to sum expenses - use LEFT() for PostgreSQL, strftime for SQLite
+        if USE_POSTGRES:
+            sum_query = '''
+                SELECT COALESCE(SUM(gasto), 0) 
+                FROM transactions 
+                WHERE categoria = %s AND LEFT(fecha, 7) = %s
+            '''
+        else:
+            sum_query = '''
+                SELECT COALESCE(SUM(gasto), 0) 
+                FROM transactions 
+                WHERE categoria = ? AND strftime('%Y-%m', fecha) = ?
+            '''
+        cursor.execute(sum_query, (cat, m))
+        spent = cursor.fetchone()[0] or 0
         b['spent'] = spent
         b['percentage'] = (spent / b['amount']) * 100 if b['amount'] > 0 else 0
         budgets_with_progress.append(b)
@@ -883,13 +894,20 @@ def get_budgets(month: str = None):
 @app.post("/budgets")
 def set_budget(budget: Budget):
     conn = get_db_connection()
+    cursor = conn.cursor()
     try:
-        # UPSERT logic (Insert or Replace)
-        # Depending on sqlite version, INSERT OR REPLACE is standard
-        conn.execute('''
-            INSERT OR REPLACE INTO budgets (category, amount, month)
-            VALUES (?, ?, ?)
-        ''', (budget.category, budget.amount, budget.month))
+        # UPSERT: PostgreSQL uses ON CONFLICT, SQLite uses INSERT OR REPLACE
+        if USE_POSTGRES:
+            cursor.execute('''
+                INSERT INTO budgets (category, amount, month)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (category, month) DO UPDATE SET amount = EXCLUDED.amount
+            ''', (budget.category, budget.amount, budget.month))
+        else:
+            cursor.execute('''
+                INSERT OR REPLACE INTO budgets (category, amount, month)
+                VALUES (?, ?, ?)
+            ''', (budget.category, budget.amount, budget.month))
         conn.commit()
     except Exception as e:
         conn.close()
@@ -901,10 +919,12 @@ def set_budget(budget: Budget):
 @app.delete("/budgets/{budget_id}")
 def delete_budget(budget_id: int):
     conn = get_db_connection()
-    conn.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+    cursor = conn.cursor()
+    cursor.execute(sql_param("DELETE FROM budgets WHERE id = ?"), (budget_id,))
     conn.commit()
     conn.close()
     return {"status": "ok", "message": "Budget deleted"}
+
 
 # --- Forecasting ---
 

@@ -5,8 +5,9 @@ import pandas as pd
 import psycopg2
 from datetime import datetime
 
-# Database connection
-DATABASE_URL = "postgresql://postgres.ijwmxgnfilnihiizozdg:72143306Sfmm!@aws-0-us-west-2.pooler.supabase.com:5432/postgres"
+# Database connection - Transaction Pooler (port 6543)
+DATABASE_URL = "postgresql://postgres.ijwmxgnfilnihiizozdg:72143306Sfmm!@aws-0-us-west-2.pooler.supabase.com:6543/postgres"
+
 
 # Read Excel file
 excel_path = r"C:\Users\adrim\.gemini\antigravity\scratch\finanzas\Viendo como trabajar con bancos.xlsx"
