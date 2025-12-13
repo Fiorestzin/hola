@@ -325,12 +325,12 @@ def get_analysis(start_date: str = None, end_date: str = None):
     '''
     top_items = conn.execute(top_items_query, params).fetchall()
     
-    # 2. Payment Methods (by Banco)
-    # We treat 'Banco' as the proxy for payment method/source
+    # 2. Payment Methods / Bank Balances (net balance: ingreso - gasto)
+    # Shows the actual balance contribution of each bank
     payment_methods_query = f'''
-        SELECT banco as name, SUM(gasto) as value
+        SELECT banco as name, (SUM(ingreso) - SUM(gasto)) as value
         FROM transactions
-        WHERE {where_clause} AND gasto > 0 AND banco IS NOT NULL AND banco != 'None'
+        WHERE {where_clause} AND banco IS NOT NULL AND banco != 'None'
         GROUP BY banco
         ORDER BY value DESC
     '''
