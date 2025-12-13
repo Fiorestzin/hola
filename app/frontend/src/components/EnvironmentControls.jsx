@@ -83,11 +83,12 @@ export function EnvironmentControls() {
     return (
         <>
             <button
-                onClick={() => setIsOpen(true)}
-                className={`${badgeColor} text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 hover:opacity-90 transition-opacity`}
+                onClick={handleSwitch}
+                disabled={loading}
+                className={`${badgeColor} text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 hover:opacity-90 transition-opacity ${loading ? 'animate-pulse' : ''}`}
             >
-                {isProd ? <CheckCircle size={12} /> : <Settings size={12} />}
-                {badgeText}
+                {loading ? <RefreshCw size={12} className="animate-spin" /> : (isProd ? <CheckCircle size={12} /> : <Settings size={12} />)}
+                {loading ? 'Cambiando...' : badgeText}
             </button>
 
             {isOpen && (

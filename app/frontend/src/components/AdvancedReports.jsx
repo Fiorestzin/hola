@@ -386,7 +386,18 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
                                                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
                                                     <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
                                                     <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 12 }} />
-                                                    <Tooltip contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }} formatter={(val) => fmt(val)} />
+                                                    <Tooltip
+                                                        contentStyle={{
+                                                            backgroundColor: '#0f172a',
+                                                            borderColor: '#334155',
+                                                            borderRadius: '12px',
+                                                            boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                                                        }}
+                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        formatter={(val) => fmt(val)}
+                                                        cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
+                                                    />
                                                     <Legend />
                                                     <Bar dataKey="ingreso" name="Ingresos" fill="#34d399" radius={[4, 4, 0, 0]} />
                                                     <Bar dataKey="gasto" name="Gastos" fill="#f87171" radius={[4, 4, 0, 0]} />
