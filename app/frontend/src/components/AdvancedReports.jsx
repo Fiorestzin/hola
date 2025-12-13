@@ -29,6 +29,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
     const [subModalOpen, setSubModalOpen] = useState(false);
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('summary'); // summary, trends, breakdown
+    const [comparisonData, setComparisonData] = useState(null);
 
     // Drill Down State
     const [ddOpen, setDdOpen] = useState(false);
@@ -49,6 +50,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
             fetchAnalysis();
             fetchForecast();
             fetchSubscriptions();
+            fetchComparison();
         }
     }, [isOpen, dateRange]);
 
@@ -101,6 +103,20 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
             setSubsData(json);
         } catch (error) {
             console.error("Error fetching subscriptions:", error);
+        }
+    };
+
+    const fetchComparison = async () => {
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end
+            });
+            const res = await fetch(`${API_URL}/comparison?${query}`);
+            const json = await res.json();
+            setComparisonData(json);
+        } catch (error) {
+            console.error("Error fetching comparison:", error);
         }
     };
 
@@ -498,108 +514,148 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
                             </div>
                         )}
 
-                        {/* --- TAB: TRENDS (Redesigned) --- */}
-                        {activeTab === 'trends' && (() => {
-                            // Calculate period comparison and daily data
-                            const startDate = new Date(dateRange.start);
-                            const endDate = new Date(dateRange.end);
-                            const daysDiff = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+                        {/* --- TAB: TRENDS (Real Comparison) --- */}
+                        {activeTab === 'trends' && (
+                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
+                                <h2 className="text-2xl font-bold text-white text-center">📊 Comparativa de Periodos</h2>
 
-                            // Current period totals
-                            const currentIncome = barData.reduce((sum, d) => sum + (d.ingreso || 0), 0);
-                            const currentExpense = barData.reduce((sum, d) => sum + (d.gasto || 0), 0);
-                            const currentNet = currentIncome - currentExpense;
+                                {comparisonData ? (
+                                    <>
+                                        {/* Period Labels */}
+                                        <div className="grid grid-cols-2 gap-4 text-center">
+                                            <div className="bg-cyan-900/30 p-4 rounded-xl border border-cyan-700/50">
+                                                <p className="text-cyan-400 text-sm font-bold">PERIODO ACTUAL</p>
+                                                <p className="text-white text-lg">{comparisonData.current.start}</p>
+                                                <p className="text-slate-400 text-sm">al {comparisonData.current.end}</p>
+                                                <p className="text-cyan-300 text-xs mt-1">{comparisonData.current.days} días</p>
+                                            </div>
+                                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+                                                <p className="text-slate-400 text-sm font-bold">PERIODO ANTERIOR</p>
+                                                <p className="text-white text-lg">{comparisonData.previous.start}</p>
+                                                <p className="text-slate-400 text-sm">al {comparisonData.previous.end}</p>
+                                                <p className="text-slate-500 text-xs mt-1">{comparisonData.previous.days} días</p>
+                                            </div>
+                                        </div>
 
-                            // Previous period (same duration, just before)
-                            const prevStart = new Date(startDate);
-                            prevStart.setDate(prevStart.getDate() - daysDiff);
-                            const prevEnd = new Date(startDate);
-                            prevEnd.setDate(prevEnd.getDate() - 1);
+                                        {/* Comparison Cards */}
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* Ingresos Comparison */}
+                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                                <h4 className="text-emerald-400 text-sm mb-4 font-bold">💰 INGRESOS</h4>
+                                                <div className="space-y-3">
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Actual:</span>
+                                                        <span className="text-emerald-400 font-bold">{fmt(comparisonData.current.ingreso)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-500">Anterior:</span>
+                                                        <span className="text-slate-300">{fmt(comparisonData.previous.ingreso)}</span>
+                                                    </div>
+                                                    <hr className="border-slate-700" />
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-slate-400">Cambio:</span>
+                                                        <span className={`font-bold text-lg ${comparisonData.changes.ingreso_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                            {comparisonData.changes.ingreso_pct >= 0 ? '↑' : '↓'} {Math.abs(comparisonData.changes.ingreso_pct)}%
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                            // For comparison, we'd need to fetch previous period data
-                            // For now, show current period analysis
-                            const avgDailyExpense = currentExpense / daysDiff;
-                            const avgDailyIncome = currentIncome / daysDiff;
+                                            {/* Gastos Comparison */}
+                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                                <h4 className="text-rose-400 text-sm mb-4 font-bold">💸 GASTOS</h4>
+                                                <div className="space-y-3">
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Actual:</span>
+                                                        <span className="text-rose-400 font-bold">{fmt(comparisonData.current.gasto)}</span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-500">Anterior:</span>
+                                                        <span className="text-slate-300">{fmt(comparisonData.previous.gasto)}</span>
+                                                    </div>
+                                                    <hr className="border-slate-700" />
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-slate-400">Cambio:</span>
+                                                        <span className={`font-bold text-lg ${comparisonData.changes.gasto_pct <= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                            {comparisonData.changes.gasto_pct >= 0 ? '↑' : '↓'} {Math.abs(comparisonData.changes.gasto_pct)}%
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
 
-                            return (
-                                <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-                                    {/* Period Summary Cards */}
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {/* Balance Comparison */}
+                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                                <h4 className="text-blue-400 text-sm mb-4 font-bold">⚖️ BALANCE</h4>
+                                                <div className="space-y-3">
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-400">Actual:</span>
+                                                        <span className={`font-bold ${comparisonData.current.balance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                            {fmt(comparisonData.current.balance)}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex justify-between">
+                                                        <span className="text-slate-500">Anterior:</span>
+                                                        <span className={`${comparisonData.previous.balance >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                                            {fmt(comparisonData.previous.balance)}
+                                                        </span>
+                                                    </div>
+                                                    <hr className="border-slate-700" />
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-slate-400">Diferencia:</span>
+                                                        <span className={`font-bold text-lg ${comparisonData.changes.balance_diff >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                            {comparisonData.changes.balance_diff >= 0 ? '+' : ''}{fmt(comparisonData.changes.balance_diff)}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Visual Bar Comparison */}
                                         <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
-                                            <h4 className="text-slate-400 text-sm mb-2">📅 Periodo Analizado</h4>
-                                            <p className="text-white text-lg font-bold">{dateRange.start}</p>
-                                            <p className="text-slate-500 text-sm">al {dateRange.end}</p>
-                                            <p className="text-cyan-400 text-sm mt-2">{daysDiff} días</p>
-                                        </div>
-
-                                        <div className="bg-slate-800/50 p-6 rounded-2xl border border-emerald-700/50">
-                                            <h4 className="text-emerald-400 text-sm mb-2">💰 Total Ingresos</h4>
-                                            <p className="text-emerald-400 text-2xl font-bold">{fmt(currentIncome)}</p>
-                                            <p className="text-slate-500 text-sm mt-2">
-                                                Promedio diario: {fmt(avgDailyIncome)}
-                                            </p>
-                                        </div>
-
-                                        <div className="bg-slate-800/50 p-6 rounded-2xl border border-rose-700/50">
-                                            <h4 className="text-rose-400 text-sm mb-2">💸 Total Gastos</h4>
-                                            <p className="text-rose-400 text-2xl font-bold">{fmt(currentExpense)}</p>
-                                            <p className="text-slate-500 text-sm mt-2">
-                                                Promedio diario: {fmt(avgDailyExpense)}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {/* Net Balance Card */}
-                                    <div className={`p-6 rounded-2xl border ${currentNet >= 0 ? 'bg-emerald-900/20 border-emerald-700/50' : 'bg-rose-900/20 border-rose-700/50'}`}>
-                                        <div className="flex justify-between items-center">
-                                            <div>
-                                                <h4 className="text-slate-300 text-sm mb-1">Balance Neto del Periodo</h4>
-                                                <p className={`text-3xl font-bold ${currentNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                    {currentNet >= 0 ? '+' : ''}{fmt(currentNet)}
-                                                </p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-slate-400 text-sm">
-                                                    {currentNet >= 0
-                                                        ? '✅ Superávit - ¡Bien hecho!'
-                                                        : '⚠️ Déficit - Revisa tus gastos'}
-                                                </p>
-                                                <p className="text-slate-500 text-xs mt-1">
-                                                    Tasa de ahorro: {currentIncome > 0 ? ((currentNet / currentIncome) * 100).toFixed(1) : 0}%
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Monthly Trend Chart */}
-                                    <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
-                                        <h3 className="text-lg font-bold text-slate-200 mb-4">📊 Evolución Mensual</h3>
-                                        <div className="h-[300px]">
-                                            {barData.length > 0 ? (
+                                            <h3 className="text-lg font-bold text-slate-200 mb-6">Comparación Visual</h3>
+                                            <div className="h-[250px]">
                                                 <ResponsiveContainer width="100%" height="100%">
-                                                    <BarChart data={barData}>
+                                                    <BarChart data={[
+                                                        { name: 'Ingresos', actual: comparisonData.current.ingreso, anterior: comparisonData.previous.ingreso },
+                                                        { name: 'Gastos', actual: comparisonData.current.gasto, anterior: comparisonData.previous.gasto },
+                                                        { name: 'Balance', actual: comparisonData.current.balance, anterior: comparisonData.previous.balance }
+                                                    ]}>
                                                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                                                        <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
-                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 12 }} />
+                                                        <XAxis dataKey="name" stroke="#94a3b8" />
+                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} />
                                                         <Tooltip
                                                             contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
                                                             formatter={(val) => fmt(val)}
                                                         />
                                                         <Legend />
-                                                        <Bar dataKey="ingreso" name="Ingresos" fill="#34d399" radius={[4, 4, 0, 0]} />
-                                                        <Bar dataKey="gasto" name="Gastos" fill="#f87171" radius={[4, 4, 0, 0]} />
+                                                        <Bar dataKey="actual" name="Periodo Actual" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                                                        <Bar dataKey="anterior" name="Periodo Anterior" fill="#64748b" radius={[4, 4, 0, 0]} />
                                                     </BarChart>
                                                 </ResponsiveContainer>
-                                            ) : (
-                                                <div className="h-full flex items-center justify-center text-slate-500">
-                                                    No hay datos para el periodo seleccionado
-                                                </div>
-                                            )}
+                                            </div>
                                         </div>
+
+                                        {/* Summary Message */}
+                                        <div className={`p-4 rounded-xl text-center ${comparisonData.changes.balance_diff >= 0 ? 'bg-emerald-900/30 border border-emerald-700/50' : 'bg-rose-900/30 border border-rose-700/50'}`}>
+                                            <p className="text-lg">
+                                                {comparisonData.changes.balance_diff >= 0
+                                                    ? '✅ ¡Mejoraste respecto al periodo anterior!'
+                                                    : '⚠️ Tu balance empeoró respecto al periodo anterior'}
+                                            </p>
+                                            <p className="text-slate-400 text-sm mt-1">
+                                                Diferencia de balance: <strong className={comparisonData.changes.balance_diff >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                                                    {comparisonData.changes.balance_diff >= 0 ? '+' : ''}{fmt(comparisonData.changes.balance_diff)}
+                                                </strong>
+                                            </p>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="text-center text-slate-500 py-20">
+                                        <p>Cargando comparación...</p>
                                     </div>
-                                </div>
-                            );
-                        })()}
+                                )}
+                            </div>
+                        )}
 
                         {/* --- TAB: BREAKDOWN --- */}
                         {activeTab === 'breakdown' && (

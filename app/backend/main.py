@@ -285,7 +285,7 @@ def get_reports(start_date: str = None, end_date: str = None):
     if not df.empty:
         try:
             df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False) # standard ISO preference
-            df['month'] = df['dt'].dt.strftime('%Y-%m')
+            df['month'] = df['dt'].strftime('%Y-%m')
             # Fallback for weird dates
             df['month'] = df['month'].fillna('Desconocido')
             
@@ -299,6 +299,71 @@ def get_reports(start_date: str = None, end_date: str = None):
     return {
         "pie_data": [dict(row) for row in cat_data],
         "bar_data": history_data
+    }
+
+
+@app.get("/comparison")
+def get_period_comparison(start_date: str, end_date: str):
+    """Compare current period with previous period of same length"""
+    from datetime import datetime, timedelta
+    
+    # Parse dates
+    current_start = datetime.strptime(start_date, "%Y-%m-%d")
+    current_end = datetime.strptime(end_date, "%Y-%m-%d")
+    days_diff = (current_end - current_start).days + 1
+    
+    # Calculate previous period
+    prev_end = current_start - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=days_diff - 1)
+    
+    conn = get_db_connection()
+    
+    def get_period_totals(start, end):
+        query = '''
+            SELECT 
+                COALESCE(SUM(ingreso), 0) as total_ingreso,
+                COALESCE(SUM(gasto), 0) as total_gasto,
+                COUNT(*) as num_transactions
+            FROM transactions 
+            WHERE fecha >= ? AND fecha <= ?
+        '''
+        result = conn.execute(query, (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))).fetchone()
+        return {
+            "ingreso": result[0] or 0,
+            "gasto": result[1] or 0,
+            "transactions": result[2] or 0,
+            "balance": (result[0] or 0) - (result[1] or 0)
+        }
+    
+    current_data = get_period_totals(current_start, current_end)
+    prev_data = get_period_totals(prev_start, prev_end)
+    
+    # Calculate % changes
+    def pct_change(current, previous):
+        if previous == 0:
+            return 100 if current > 0 else 0
+        return round(((current - previous) / previous) * 100, 1)
+    
+    conn.close()
+    
+    return {
+        "current": {
+            "start": start_date,
+            "end": end_date,
+            "days": days_diff,
+            **current_data
+        },
+        "previous": {
+            "start": prev_start.strftime("%Y-%m-%d"),
+            "end": prev_end.strftime("%Y-%m-%d"),
+            "days": days_diff,
+            **prev_data
+        },
+        "changes": {
+            "ingreso_pct": pct_change(current_data["ingreso"], prev_data["ingreso"]),
+            "gasto_pct": pct_change(current_data["gasto"], prev_data["gasto"]),
+            "balance_diff": current_data["balance"] - prev_data["balance"]
+        }
     }
 
 @app.get("/analysis")
