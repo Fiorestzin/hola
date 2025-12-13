@@ -88,14 +88,30 @@ function App() {
     }
   };
 
-  // Fetch data function (defined before hooks)
-  const fetchData = async () => {
+  // Current environment state
+  const [currentEnv, setCurrentEnv] = useState("TEST");
+
+  // Fetch current environment from config
+  const fetchEnv = async () => {
     try {
-      const txRes = await fetch(`${API_URL}/transactions?limit=20`);
+      const res = await fetch(`${API_URL}/config`);
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentEnv(data.env || "TEST");
+      }
+    } catch (e) {
+      console.error("Error fetching env config:", e);
+    }
+  };
+
+  // Fetch data function (defined before hooks)
+  const fetchData = async (env = currentEnv) => {
+    try {
+      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=${env}`);
       const txData = await txRes.json();
       setTransactions(txData);
 
-      const bankRes = await fetch(`${API_URL}/summary/banks`);
+      const bankRes = await fetch(`${API_URL}/summary/banks?environment=${env}`);
       const bankData = await bankRes.json();
       setBanks(bankData);
 
@@ -108,10 +124,28 @@ function App() {
 
   // useEffect for fetching data - MUST be before any early returns!
   useEffect(() => {
+    const initData = async () => {
+      // First get current environment
+      let env = "TEST";
+      try {
+        const res = await fetch(`${API_URL}/config`);
+        if (res.ok) {
+          const data = await res.json();
+          env = data.env || "TEST";
+          setCurrentEnv(env);
+        }
+      } catch (e) {
+        console.error("Error fetching env:", e);
+      }
+      // Then fetch data with that environment
+      await fetchData(env);
+    };
+
     if (isAuthenticated) {
-      fetchData();
+      initData();
     }
   }, [isAuthenticated]);
+
 
   // --- EARLY RETURNS (after all hooks) ---
   if (checkingAuth) {
