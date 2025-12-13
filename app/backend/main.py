@@ -244,9 +244,32 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
 async def read_users_me(current_user = Depends(get_current_user)):
     return {"username": current_user["username"], "is_admin": current_user["is_admin"]}
 
+# Global environment state (shared across requests)
+current_environment = "TEST"  # Default to demo mode
+
 @app.get("/")
 def read_root():
     return {"message": "Finance API is running"}
+
+@app.get("/config")
+def get_config():
+    """Get current environment configuration"""
+    global current_environment
+    return {
+        "env": current_environment,
+        "db": "PostgreSQL (Supabase)"
+    }
+
+@app.post("/config/switch")
+def switch_environment(data: dict):
+    """Switch between TEST and PROD environments"""
+    global current_environment
+    new_env = data.get("env", "TEST")
+    if new_env not in ["TEST", "PROD"]:
+        raise HTTPException(status_code=400, detail="Invalid environment. Use TEST or PROD.")
+    current_environment = new_env
+    return {"status": "ok", "env": current_environment}
+
 
 @app.get("/transactions")
 def get_transactions(
