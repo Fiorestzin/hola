@@ -167,10 +167,13 @@ function App() {
 
   const handleSaveTransaction = async (data) => {
     try {
+      // Inject current environment into the transaction data
+      const payload = { ...data, environment: currentEnv };
+
       const res = await fetch(`${API_URL}/transaction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
@@ -413,6 +416,7 @@ function App() {
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
         totalNetWorth={totalSaldo}
+        environment={currentEnv}
       />
     </div >
   );

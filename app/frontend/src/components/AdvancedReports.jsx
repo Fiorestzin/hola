@@ -15,7 +15,7 @@ import { API_URL } from "../config";
 const COLORS = ['#818cf8', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#a78bfa', '#f87171'];
 const BARS_COLORS = ['#38bdf8', '#34d399', '#f472b6', '#fbbf24'];
 
-export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) {
+export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, environment = "TEST" }) {
     const [dateRange, setDateRange] = useState({
         start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0], // First day of current month
         end: new Date().toISOString().split('T')[0]
@@ -52,14 +52,15 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
             fetchSubscriptions();
             fetchComparison();
         }
-    }, [isOpen, dateRange]);
+    }, [isOpen, dateRange, environment]);
 
     const fetchReports = async () => {
         setLoading(true);
         try {
             const query = new URLSearchParams({
                 start_date: dateRange.start,
-                end_date: dateRange.end
+                end_date: dateRange.end,
+                environment: environment
             });
 
             const res = await fetch(`${API_URL}/reports?${query}`);
@@ -76,7 +77,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
         try {
             const query = new URLSearchParams({
                 start_date: dateRange.start,
-                end_date: dateRange.end
+                end_date: dateRange.end,
+                environment: environment
             });
             const res = await fetch(`${API_URL}/analysis?${query}`);
             const json = await res.json();
@@ -110,7 +112,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
         try {
             const query = new URLSearchParams({
                 start_date: dateRange.start,
-                end_date: dateRange.end
+                end_date: dateRange.end,
+                environment: environment
             });
             const res = await fetch(`${API_URL}/comparison?${query}`);
             const json = await res.json();
@@ -122,13 +125,52 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
 
     const handleExport = async () => {
         try {
+            // Fetch all transactions for current range
             const query = new URLSearchParams({
                 start_date: dateRange.start,
-                end_date: dateRange.end
+                end_date: dateRange.end,
+                limit: 0, // No limit
+                environment: environment
             });
-            window.location.href = `${API_URL}/export_report?${query}`;
+            const res = await fetch(`${API_URL}/transactions?${query}`);
+            const transactions = await res.json();
+
+            if (!transactions || transactions.length === 0) {
+                alert("No hay transacciones para exportar en este período.");
+                return;
+            }
+
+            // Convert to CSV
+            const headers = ['ID', 'Fecha', 'Tipo', 'Categoría', 'Detalle', 'Banco', 'Monto'];
+            const csvRows = [headers.join(',')];
+
+            transactions.forEach(tx => {
+                const row = [
+                    tx.id,
+                    tx.fecha,
+                    tx.tipo,
+                    `"${(tx.categoria || '').replace(/"/g, '""')}"`, // Escape quotes
+                    `"${(tx.detalle || '').replace(/"/g, '""')}"`,
+                    tx.banco,
+                    tx.monto
+                ];
+                csvRows.push(row.join(','));
+            });
+
+            const csvContent = "data:text/csv;charset=utf-8," + csvRows.join("\n");
+            const encodedUri = encodeURI(csvContent);
+
+            // Create download link and trigger
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `finanzas_export_${dateRange.start}_${dateRange.end}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
         } catch (error) {
             console.error("Error exporting report:", error);
+            alert("Error al exportar");
         }
     };
 
@@ -143,7 +185,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
         }
 
         try {
-            const res = await fetch(`${API_URL}/transactions?${params}&limit=0`);
+            const res = await fetch(`${API_URL}/transactions?${params}&limit=0&environment=${environment}`);
             const json = await res.json();
             setDdTransactions(json);
             setDdTitle(title);
