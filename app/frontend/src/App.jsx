@@ -63,11 +63,20 @@ function App() {
   };
 
   const handleDeleteTransaction = async (txId) => {
-    if (!confirm('¿Eliminar esta transacción?')) return;
+    const password = prompt('Ingresa tu contraseña para eliminar:');
+    if (!password) return;
+
+    // Verify password is correct (simple client-side check)
+    if (password !== 'fiorestzin') {
+      alert('Contraseña incorrecta');
+      return;
+    }
+
     try {
       const res = await fetch(`${API_URL}/transaction/${txId}`, { method: 'DELETE' });
       if (res.ok) {
-        setTransactions(transactions.filter(tx => tx.id !== txId));
+        // Refresh all data to update totals
+        fetchData();
       } else {
         alert('Error al eliminar');
       }

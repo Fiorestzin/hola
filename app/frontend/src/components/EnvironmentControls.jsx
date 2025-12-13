@@ -92,11 +92,11 @@ export function EnvironmentControls() {
 
             {isOpen && (
                 <div
-                    className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm"
+                    className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 backdrop-blur-sm pt-20 overflow-y-auto"
                     onClick={() => setIsOpen(false)}
                 >
                     <div
-                        className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-md shadow-2xl border border-slate-700"
+                        className="bg-[#1e293b] p-6 rounded-2xl w-full max-w-md shadow-2xl border border-slate-700 mb-10"
                         onClick={(e) => e.stopPropagation()}
                     >
                         <div className="flex justify-between items-center mb-6">
@@ -132,39 +132,6 @@ export function EnvironmentControls() {
                                 <RefreshCw size={18} className={loading ? "animate-spin" : ""} />
                                 Cambiar a {isProd ? "MODO PRUEBA" : "MODO REAL"}
                             </button>
-
-                            <hr className="border-slate-700" />
-
-                            {/* ACTION: RESET */}
-                            <div className="space-y-2">
-                                <h3 className="text-red-400 font-bold flex items-center gap-2">
-                                    <AlertTriangle size={18} /> Zona de Peligro
-                                </h3>
-                                <p className="text-slate-400 text-sm">
-                                    Esto borrará <strong>todas las transacciones y presupuestos</strong> del entorno actual.
-                                    Las categorías se mantendrán.
-                                </p>
-
-                                <input
-                                    type="text"
-                                    placeholder='Escribe "fiorestzin" para confirmar'
-                                    value={resetPhrase}
-                                    onChange={(e) => setResetPhrase(e.target.value)}
-                                    className="w-full bg-slate-900 border border-red-900/50 text-white px-4 py-2 rounded-lg focus:outline-none focus:border-red-500 placeholder-slate-600"
-                                />
-
-                                <button
-                                    onClick={handleReset}
-                                    disabled={loading || resetPhrase !== "fiorestzin"}
-                                    className={`w-full py-3 rounded-xl flex items-center justify-center gap-2 transition-colors font-bold ${resetPhrase === "fiorestzin"
-                                        ? "bg-red-600 hover:bg-red-700 text-white cursor-pointer"
-                                        : "bg-slate-800 text-slate-500 cursor-not-allowed"
-                                        }`}
-                                >
-                                    <Trash2 size={18} />
-                                    ELIMINAR DATOS (RESET)
-                                </button>
-                            </div>
 
                             {message && (
                                 <div className={`p-3 rounded-lg text-sm text-center ${message.type === 'success' ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'}`}>
