@@ -15,12 +15,18 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto' }) {
 
     // Fetch categories on mount
     const [categories, setCategories] = useState([]);
+    const [banks, setBanks] = useState([]);
 
     useEffect(() => {
         if (isOpen) {
             fetch(`${API_URL}/categories`)
                 .then(res => res.json())
                 .then(data => setCategories(data))
+                .catch(err => console.error(err));
+
+            fetch(`${API_URL}/banks`)
+                .then(res => res.json())
+                .then(data => setBanks(data))
                 .catch(err => console.error(err));
         }
     }, [isOpen]);
@@ -90,12 +96,9 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto' }) {
                                 value={formData.banco}
                                 onChange={handleChange}
                             >
-                                <option>Efectivo</option>
-                                <option>Banco Chile</option>
-                                <option>Santander</option>
-                                <option>Scotiabank</option>
-                                <option>Estado</option>
-                                <option>Falabella</option>
+                                {banks.map(b => (
+                                    <option key={b.id} value={b.nombre}>{b.nombre}</option>
+                                ))}
                             </select>
                         </div>
                     </div>

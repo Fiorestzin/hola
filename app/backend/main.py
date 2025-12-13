@@ -573,7 +573,7 @@ def init_db():
     # Check if banks exist, if not add defaults
     cursor.execute('SELECT count(*) FROM banks')
     if cursor.fetchone()[0] == 0:
-        default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',)]
+        default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',), ('Scotiabank',), ('Estado',), ('Falabella',)]
         cursor.executemany('INSERT INTO banks (nombre) VALUES (?)', default_banks)
     
     # Create Users Table
