@@ -402,7 +402,7 @@ def get_reports(start_date: str = None, end_date: str = None, environment: str =
 
 
 @app.get("/comparison")
-def get_period_comparison(start_date: str, end_date: str):
+def get_period_comparison(start_date: str, end_date: str, environment: str = "TEST"):
     """Compare current period with previous period of same length"""
     from datetime import datetime, timedelta
     
@@ -425,9 +425,9 @@ def get_period_comparison(start_date: str, end_date: str):
                 COALESCE(SUM(gasto), 0) as total_gasto,
                 COUNT(*) as num_transactions
             FROM transactions 
-            WHERE fecha >= ? AND fecha <= ?
+            WHERE environment = ? AND fecha >= ? AND fecha <= ?
         '''
-        cursor.execute(sql_param(query), (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+        cursor.execute(sql_param(query), (environment, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
         result = cursor.fetchone()
         return {
             "ingreso": result[0] or 0,
@@ -469,12 +469,12 @@ def get_period_comparison(start_date: str, end_date: str):
     }
 
 @app.get("/analysis")
-def get_analysis(start_date: str = None, end_date: str = None):
+def get_analysis(start_date: str = None, end_date: str = None, environment: str = "TEST"):
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    where_clause = "1=1"
-    params = []
+    where_clause = "environment = ?"
+    params = [environment]
     if start_date:
         where_clause += " AND fecha >= ?"
         params.append(start_date)
@@ -523,7 +523,8 @@ def get_history(
     start_date: str = None, 
     end_date: str = None,
     filter_col: str = 'detalle', # detalle, categoria, banco
-    filter_val: str = None
+    filter_val: str = None,
+    environment: str = "TEST"
 ):
     conn = get_db_connection()
     
@@ -531,12 +532,13 @@ def get_history(
     if filter_col not in ['detalle', 'categoria', 'banco']:
         raise HTTPException(status_code=400, detail="Invalid filter column")
 
-    where_clause = "1=1"
-    params = []
+    where_clause = "environment = ?"
+    params = [environment]
     
     if start_date:
         where_clause += " AND fecha >= ?"
         params.append(start_date)
+
     if end_date:
         where_clause += " AND fecha <= ?"
         params.append(end_date)
