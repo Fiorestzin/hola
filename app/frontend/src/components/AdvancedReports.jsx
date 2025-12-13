@@ -503,7 +503,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0 }) 
                             <div className="space-y-8 animate-in fade-in zoom-in duration-300">
                                 <div className="p-6 bg-slate-800/50 border border-slate-700 rounded-2xl text-center">
                                     <h3 className="text-xl font-bold text-slate-200 mb-2">Comparativa Anual & Presupuestos</h3>
-                                    <p className="text-slate-400 mb-8">Visualiza cómo se compara tu "Yo Actual" vs "Yo del Pasado".</p>
+                                    <p className="text-slate-400 mb-2">Visualiza cómo se compara tu "Yo Actual" vs "Yo del Pasado".</p>
+                                    <p className="text-sm text-cyan-400 mb-6">📅 Mostrando: {dateRange.start} al {dateRange.end}</p>
 
                                     <div className="h-[400px]">
                                         {barData.length > 0 ? (
