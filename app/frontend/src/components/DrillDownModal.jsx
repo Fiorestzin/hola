@@ -72,28 +72,71 @@ export default function DrillDownModal({ isOpen, onClose, title, transactions, e
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
-                    {/* Evolution Chart (Optional) */}
-                    {evolutionData && evolutionData.length > 0 && (
-                        <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
-                            <h3 className="text-sm font-bold text-slate-400 mb-4 flex items-center gap-2">
-                                <TrendingUp size={16} className="text-cyan-400" /> Evolución Mensual
-                            </h3>
-                            <div className="h-48 w-full">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={evolutionData}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                                        <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 10 }} />
-                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 10 }} />
-                                        <Tooltip
-                                            contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', color: '#f8fafc' }}
-                                            formatter={(val) => fmt(val)}
-                                        />
-                                        <Line type="monotone" dataKey="gasto" stroke="#f472b6" strokeWidth={3} dot={{ r: 3 }} />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                    {/* Evolution Chart - Daily Cumulative Balance */}
+                    {transactions && transactions.length > 1 && (() => {
+                        // Compute daily cumulative balance from transactions
+                        const sorted = [...transactions].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+                        // Group by date and calculate daily net
+                        const dailyData = {};
+                        sorted.forEach(tx => {
+                            const date = tx.fecha;
+                            if (!dailyData[date]) {
+                                dailyData[date] = { date, ingreso: 0, gasto: 0, net: 0 };
+                            }
+                            dailyData[date].ingreso += tx.ingreso || 0;
+                            dailyData[date].gasto += tx.gasto || 0;
+                            dailyData[date].net += (tx.ingreso || 0) - (tx.gasto || 0);
+                        });
+
+                        // Convert to array and compute cumulative balance
+                        const dailyArray = Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date));
+                        let cumulative = 0;
+                        const evolutionChart = dailyArray.map(d => {
+                            cumulative += d.net;
+                            return {
+                                fecha: d.date,
+                                balance: cumulative,
+                                ingreso: d.ingreso,
+                                gasto: d.gasto
+                            };
+                        });
+
+                        return (
+                            <div className="bg-slate-800/50 p-4 rounded-xl border border-slate-700/50">
+                                <h3 className="text-sm font-bold text-slate-400 mb-4 flex items-center gap-2">
+                                    <TrendingUp size={16} className="text-cyan-400" /> Tendencia de Saldo
+                                </h3>
+                                <div className="h-48 w-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={evolutionChart}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                                            <XAxis
+                                                dataKey="fecha"
+                                                stroke="#94a3b8"
+                                                tick={{ fontSize: 10 }}
+                                                tickFormatter={(val) => val.slice(5)}
+                                            />
+                                            <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 10 }} />
+                                            <Tooltip
+                                                contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
+                                                labelFormatter={(label) => `Fecha: ${label}`}
+                                                formatter={(val, name) => [fmt(val), name === 'balance' ? 'Saldo Acum.' : name]}
+                                            />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="balance"
+                                                name="Saldo Acum."
+                                                stroke="#38bdf8"
+                                                strokeWidth={2}
+                                                dot={{ r: 4, fill: '#38bdf8' }}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {/* Table */}
                     <div className="overflow-x-auto rounded-lg border border-slate-700">
