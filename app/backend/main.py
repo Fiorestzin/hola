@@ -285,7 +285,7 @@ def get_reports(start_date: str = None, end_date: str = None):
     if not df.empty:
         try:
             df['dt'] = pd.to_datetime(df['fecha'], errors='coerce', dayfirst=False) # standard ISO preference
-            df['month'] = df['dt'].strftime('%Y-%m')
+            df['month'] = df['dt'].dt.strftime('%Y-%m')
             # Fallback for weird dates
             df['month'] = df['month'].fillna('Desconocido')
             
