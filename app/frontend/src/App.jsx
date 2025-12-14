@@ -408,6 +408,7 @@ function App() {
         }
         onSave={handleSaveTransaction}
         type={modalType}
+        environment={currentEnv}
       />
 
       {/* Categories Manager */}

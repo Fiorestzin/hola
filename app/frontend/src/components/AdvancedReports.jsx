@@ -588,16 +588,24 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                         {/* Comparison Cards */}
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                             {/* Ingresos Comparison */}
-                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 hover:border-emerald-500/50 transition-colors">
                                                 <h4 className="text-emerald-400 text-sm mb-4 font-bold">💰 INGRESOS</h4>
                                                 <div className="space-y-3">
-                                                    <div className="flex justify-between">
+                                                    <div
+                                                        className="flex justify-between cursor-pointer hover:bg-emerald-900/20 p-2 rounded-lg -m-2 transition-colors"
+                                                        onClick={() => fetchDrillDownByType(comparisonData.current.start, comparisonData.current.end, 'Ingreso', `Ingresos Periodo Actual (${comparisonData.current.start} - ${comparisonData.current.end})`)}
+                                                        title="Click para ver detalles"
+                                                    >
                                                         <span className="text-slate-400">Actual:</span>
-                                                        <span className="text-emerald-400 font-bold">{fmt(comparisonData.current.ingreso)}</span>
+                                                        <span className="text-emerald-400 font-bold underline">{fmt(comparisonData.current.ingreso)}</span>
                                                     </div>
-                                                    <div className="flex justify-between">
+                                                    <div
+                                                        className="flex justify-between cursor-pointer hover:bg-slate-700/30 p-2 rounded-lg -m-2 transition-colors"
+                                                        onClick={() => fetchDrillDownByType(comparisonData.previous.start, comparisonData.previous.end, 'Ingreso', `Ingresos Periodo Anterior (${comparisonData.previous.start} - ${comparisonData.previous.end})`)}
+                                                        title="Click para ver detalles"
+                                                    >
                                                         <span className="text-slate-500">Anterior:</span>
-                                                        <span className="text-slate-300">{fmt(comparisonData.previous.ingreso)}</span>
+                                                        <span className="text-slate-300 underline">{fmt(comparisonData.previous.ingreso)}</span>
                                                     </div>
                                                     <hr className="border-slate-700" />
                                                     <div className="flex justify-between items-center">
@@ -610,16 +618,24 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                             </div>
 
                                             {/* Gastos Comparison */}
-                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
+                                            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 hover:border-rose-500/50 transition-colors">
                                                 <h4 className="text-rose-400 text-sm mb-4 font-bold">💸 GASTOS</h4>
                                                 <div className="space-y-3">
-                                                    <div className="flex justify-between">
+                                                    <div
+                                                        className="flex justify-between cursor-pointer hover:bg-rose-900/20 p-2 rounded-lg -m-2 transition-colors"
+                                                        onClick={() => fetchDrillDownByType(comparisonData.current.start, comparisonData.current.end, 'Gasto', `Gastos Periodo Actual (${comparisonData.current.start} - ${comparisonData.current.end})`)}
+                                                        title="Click para ver detalles"
+                                                    >
                                                         <span className="text-slate-400">Actual:</span>
-                                                        <span className="text-rose-400 font-bold">{fmt(comparisonData.current.gasto)}</span>
+                                                        <span className="text-rose-400 font-bold underline">{fmt(comparisonData.current.gasto)}</span>
                                                     </div>
-                                                    <div className="flex justify-between">
+                                                    <div
+                                                        className="flex justify-between cursor-pointer hover:bg-slate-700/30 p-2 rounded-lg -m-2 transition-colors"
+                                                        onClick={() => fetchDrillDownByType(comparisonData.previous.start, comparisonData.previous.end, 'Gasto', `Gastos Periodo Anterior (${comparisonData.previous.start} - ${comparisonData.previous.end})`)}
+                                                        title="Click para ver detalles"
+                                                    >
                                                         <span className="text-slate-500">Anterior:</span>
-                                                        <span className="text-slate-300">{fmt(comparisonData.previous.gasto)}</span>
+                                                        <span className="text-slate-300 underline">{fmt(comparisonData.previous.gasto)}</span>
                                                     </div>
                                                     <hr className="border-slate-700" />
                                                     <div className="flex justify-between items-center">

@@ -876,6 +876,15 @@ def init_db():
             )
         ''')
         
+        # Settings table for configurable values (SQLite)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT
+            )
+        ''')
+        
         cursor.execute('SELECT count(*) FROM users')
         if cursor.fetchone()[0] == 0:
             hashed_pwd = ph.hash("fiorestzin")

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Save, TrendingUp, TrendingDown } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto' }) {
+export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', environment = 'TEST' }) {
     if (!isOpen) return null;
 
     const [formData, setFormData] = useState({
@@ -19,17 +19,17 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto' }) {
 
     useEffect(() => {
         if (isOpen) {
-            fetch(`${API_URL}/categories`)
+            fetch(`${API_URL}/categories?environment=${environment}`)
                 .then(res => res.json())
                 .then(data => setCategories(data))
                 .catch(err => console.error(err));
 
-            fetch(`${API_URL}/banks`)
+            fetch(`${API_URL}/banks?environment=${environment}`)
                 .then(res => res.json())
                 .then(data => setBanks(data))
                 .catch(err => console.error(err));
         }
-    }, [isOpen]);
+    }, [isOpen, environment]);
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
