@@ -270,6 +270,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             const params = new URLSearchParams({
                 start_date: startDate,
                 end_date: endDate,
+                environment: environment,
                 limit: 0
             });
             const res = await fetch(`${API_URL}/transactions?${params}`);
