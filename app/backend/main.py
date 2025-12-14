@@ -810,9 +810,16 @@ def init_db():
                 banco TEXT,
                 monto REAL,
                 ingreso REAL,
-                gasto REAL
+                gasto REAL,
+                environment TEXT DEFAULT 'TEST'
             )
         ''')
+        
+        # Migration: Add environment column to transactions if missing
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN environment TEXT DEFAULT 'TEST'")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS budgets (
