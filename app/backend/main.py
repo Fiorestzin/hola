@@ -1173,43 +1173,46 @@ def get_forecasting(months_ahead: int = 3):
 
 @app.get("/subscriptions")
 def get_subscriptions(environment: str = "TEST"):
-    """Detect recurring expenses (potential subscriptions) based on transactions that appear in multiple distinct months."""
+    """Detect recurring expenses (potential subscriptions) based on transactions that appear in multiple distinct months.
+    Returns the REAL total paid, not an annual estimate."""
     conn = get_db_connection()
     
-    # Improved logic:
+    # Logic:
     # 1. Filter by environment
-    # 2. Group by detalle (item name)
-    # 3. Use average amount instead of exact match
-    # 4. Count distinct months instead of just frequency
+    # 2. Group by detalle (item name) - detect by name, not amount
+    # 3. Count distinct months (must appear in 3+ different months)
+    # 4. Return REAL total paid (SUM), not estimate
     
     if USE_POSTGRES:
         query = '''
             SELECT 
                 detalle as name, 
-                ROUND(AVG(monto)::numeric, 0) as amount, 
+                ROUND(AVG(monto)::numeric, 0) as avg_amount, 
                 COUNT(*) as frequency,
                 MAX(fecha) as last_payment,
-                COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) as distinct_months
+                COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) as distinct_months,
+                SUM(monto) as total_paid
             FROM transactions 
-            WHERE gasto > 0 AND environment = %s
+            WHERE gasto > 0 AND environment = %s AND detalle IS NOT NULL AND detalle != ''
             GROUP BY detalle
             HAVING COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) >= 3
-            ORDER BY last_payment DESC
+            ORDER BY total_paid DESC
         '''
     else:
         # SQLite version
         query = '''
             SELECT 
                 detalle as name, 
-                ROUND(AVG(monto), 0) as amount, 
+                ROUND(AVG(monto), 0) as avg_amount, 
                 COUNT(*) as frequency,
                 MAX(fecha) as last_payment,
-                COUNT(DISTINCT strftime('%Y-%m', fecha)) as distinct_months
+                COUNT(DISTINCT strftime('%Y-%m', fecha)) as distinct_months,
+                SUM(monto) as total_paid
             FROM transactions 
-            WHERE gasto > 0 AND environment = ?
+            WHERE gasto > 0 AND environment = ? AND detalle IS NOT NULL AND detalle != ''
             GROUP BY detalle
             HAVING COUNT(DISTINCT strftime('%Y-%m', fecha)) >= 3
-            ORDER BY last_payment DESC
+            ORDER BY total_paid DESC
         '''
     
     cursor = conn.cursor()
@@ -1226,7 +1229,7 @@ def get_subscriptions(environment: str = "TEST"):
                 "frequency": r[2],
                 "last_payment": r[3],
                 "distinct_months": r[4],
-                "annual_cost": float(r[1]) * 12 if r[1] else 0
+                "total_paid": float(r[5]) if r[5] else 0
             })
         else:
             subs.append({
@@ -1235,7 +1238,7 @@ def get_subscriptions(environment: str = "TEST"):
                 "frequency": r[2],
                 "last_payment": r[3],
                 "distinct_months": r[4],
-                "annual_cost": (r[1] or 0) * 12
+                "total_paid": r[5] or 0
             })
         
     return subs

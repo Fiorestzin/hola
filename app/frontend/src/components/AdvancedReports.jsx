@@ -678,23 +678,89 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                         {/* Visual Bar Comparison */}
                                         <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700">
                                             <h3 className="text-lg font-bold text-slate-200 mb-6">Comparación Visual</h3>
+                                            <p className="text-xs text-slate-500 mb-4">💡 Click en las barras para ver detalles</p>
                                             <div className="h-[250px]">
                                                 <ResponsiveContainer width="100%" height="100%">
-                                                    <BarChart data={[
-                                                        { name: 'Ingresos', actual: comparisonData.current.ingreso, anterior: comparisonData.previous.ingreso },
-                                                        { name: 'Gastos', actual: comparisonData.current.gasto, anterior: comparisonData.previous.gasto },
-                                                        { name: 'Balance', actual: comparisonData.current.balance, anterior: comparisonData.previous.balance }
-                                                    ]}>
+                                                    <BarChart
+                                                        data={[
+                                                            {
+                                                                name: 'Ingresos',
+                                                                actual: comparisonData.current.ingreso,
+                                                                anterior: comparisonData.previous.ingreso,
+                                                                tipo: 'Ingreso',
+                                                                color: '#10b981'
+                                                            },
+                                                            {
+                                                                name: 'Gastos',
+                                                                actual: comparisonData.current.gasto,
+                                                                anterior: comparisonData.previous.gasto,
+                                                                tipo: 'Gasto',
+                                                                color: '#f43f5e'
+                                                            },
+                                                            {
+                                                                name: 'Balance',
+                                                                actual: comparisonData.current.balance,
+                                                                anterior: comparisonData.previous.balance,
+                                                                tipo: 'Balance',
+                                                                color: '#3b82f6'
+                                                            }
+                                                        ]}
+                                                        onClick={(data) => {
+                                                            if (data && data.activePayload && data.activePayload[0]) {
+                                                                const payload = data.activePayload[0].payload;
+                                                                if (payload.tipo !== 'Balance') {
+                                                                    fetchDrillDownByType(
+                                                                        comparisonData.current.start,
+                                                                        comparisonData.current.end,
+                                                                        payload.tipo,
+                                                                        `${payload.name} Periodo Actual`
+                                                                    );
+                                                                }
+                                                            }
+                                                        }}
+                                                        style={{ cursor: 'pointer' }}
+                                                    >
                                                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
                                                         <XAxis dataKey="name" stroke="#94a3b8" />
-                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} />
+                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${Math.round(val / 1000)}k`} />
                                                         <Tooltip
-                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }}
+                                                            contentStyle={{
+                                                                backgroundColor: '#0f172a',
+                                                                borderColor: '#334155',
+                                                                borderRadius: '12px',
+                                                                boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                                                            }}
+                                                            cursor={{ fill: 'transparent' }}
                                                             formatter={(val) => fmt(val)}
+                                                            labelStyle={{ color: '#f1f5f9' }}
                                                         />
                                                         <Legend />
-                                                        <Bar dataKey="actual" name="Periodo Actual" fill="#38bdf8" radius={[4, 4, 0, 0]} />
-                                                        <Bar dataKey="anterior" name="Periodo Anterior" fill="#64748b" radius={[4, 4, 0, 0]} />
+                                                        <Bar
+                                                            dataKey="actual"
+                                                            name="Periodo Actual"
+                                                            radius={[6, 6, 0, 0]}
+                                                        >
+                                                            {[
+                                                                { color: '#10b981' },
+                                                                { color: '#f43f5e' },
+                                                                { color: '#3b82f6' }
+                                                            ].map((entry, index) => (
+                                                                <Cell key={`cell-actual-${index}`} fill={entry.color} />
+                                                            ))}
+                                                        </Bar>
+                                                        <Bar
+                                                            dataKey="anterior"
+                                                            name="Periodo Anterior"
+                                                            radius={[6, 6, 0, 0]}
+                                                        >
+                                                            {[
+                                                                { color: '#10b98155' },
+                                                                { color: '#f43f5e55' },
+                                                                { color: '#3b82f655' }
+                                                            ].map((entry, index) => (
+                                                                <Cell key={`cell-anterior-${index}`} fill={entry.color} />
+                                                            ))}
+                                                        </Bar>
                                                     </BarChart>
                                                 </ResponsiveContainer>
                                             </div>
