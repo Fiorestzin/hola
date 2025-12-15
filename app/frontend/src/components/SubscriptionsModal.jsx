@@ -17,7 +17,7 @@ export default function SubscriptionsModal({ isOpen, onClose, subscriptions }) {
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
                             <AlertCircle className="text-purple-400" /> Detector de Suscripciones
                         </h2>
-                        <p className="text-slate-400 text-sm">Gastos recurrentes detectados (3+ meses)</p>
+                        <p className="text-slate-400 text-sm">Gastos con el mismo detalle en 2+ meses diferentes</p>
                     </div>
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700 rounded-lg">
                         <X size={20} />
@@ -70,8 +70,12 @@ export default function SubscriptionsModal({ isOpen, onClose, subscriptions }) {
                         {subscriptions.length === 0 && (
                             <div className="text-center py-12 text-slate-500">
                                 <AlertCircle className="mx-auto mb-3 text-slate-600" size={40} />
-                                <p>No hemos detectado patrones de suscripción claros aún.</p>
-                                <p className="text-sm mt-1">Necesitamos al menos 3 meses de datos.</p>
+                                <p>No se detectaron patrones de suscripción.</p>
+                                <p className="text-sm mt-2">Para que un gasto aparezca aquí, debe tener:</p>
+                                <ul className="text-sm mt-1 text-slate-400">
+                                    <li>• El mismo texto en "Detalle"</li>
+                                    <li>• Aparecer en al menos 2 meses diferentes</li>
+                                </ul>
                             </div>
                         )}
                     </div>

@@ -1195,7 +1195,7 @@ def get_subscriptions(environment: str = "TEST"):
             FROM transactions 
             WHERE gasto > 0 AND environment = %s AND detalle IS NOT NULL AND detalle != ''
             GROUP BY detalle
-            HAVING COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) >= 3
+            HAVING COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) >= 2
             ORDER BY total_paid DESC
         '''
     else:
@@ -1211,7 +1211,7 @@ def get_subscriptions(environment: str = "TEST"):
             FROM transactions 
             WHERE gasto > 0 AND environment = ? AND detalle IS NOT NULL AND detalle != ''
             GROUP BY detalle
-            HAVING COUNT(DISTINCT strftime('%Y-%m', fecha)) >= 3
+            HAVING COUNT(DISTINCT strftime('%Y-%m', fecha)) >= 2
             ORDER BY total_paid DESC
         '''
     

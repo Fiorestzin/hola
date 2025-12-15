@@ -366,11 +366,11 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         <div className="flex items-center gap-2">
                             <button
                                 onClick={() => setSubModalOpen(true)}
-                                className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 px-3 py-2 rounded-lg border border-purple-500/50 transition-all text-sm flex items-center gap-2"
-                                title="Detecta gastos recurrentes automáticos (Netflix, Spotify, etc.)"
+                                className="bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/40 hover:to-indigo-600/40 text-purple-200 px-4 py-2 rounded-lg border border-purple-500/50 transition-all text-sm flex items-center gap-2 shadow-lg"
+                                title="Detecta patrones de gastos recurrentes (3+ meses)"
                             >
                                 <AlertCircle size={16} />
-                                <span className="hidden md:inline">{subsData.length > 0 ? `${subsData.length} Subs` : 'Detector'}</span>
+                                <span>{subsData.length > 0 ? `${subsData.length} Detectados` : 'Detector'}</span>
                             </button>
                             <button
                                 onClick={handleExport}
