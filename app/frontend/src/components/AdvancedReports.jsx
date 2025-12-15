@@ -725,20 +725,32 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                         <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${Math.round(val / 1000)}k`} />
                                                         <Tooltip
                                                             contentStyle={{
-                                                                backgroundColor: '#0f172a',
-                                                                borderColor: '#334155',
-                                                                borderRadius: '12px',
-                                                                boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                                                                backgroundColor: '#1e293b',
+                                                                borderColor: '#475569',
+                                                                borderRadius: '8px',
+                                                                color: '#f8fafc'
                                                             }}
-                                                            cursor={{ fill: 'transparent' }}
-                                                            formatter={(val) => fmt(val)}
-                                                            labelStyle={{ color: '#f1f5f9' }}
+                                                            itemStyle={{ color: '#f8fafc' }}
+                                                            labelStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
+                                                            cursor={false}
+                                                            formatter={(val) => [fmt(val), null]}
                                                         />
                                                         <Legend />
                                                         <Bar
                                                             dataKey="actual"
                                                             name="Periodo Actual"
                                                             radius={[6, 6, 0, 0]}
+                                                            onClick={(data) => {
+                                                                if (data && data.tipo !== 'Balance') {
+                                                                    fetchDrillDownByType(
+                                                                        comparisonData.current.start,
+                                                                        comparisonData.current.end,
+                                                                        data.tipo,
+                                                                        `${data.name} Periodo Actual`
+                                                                    );
+                                                                }
+                                                            }}
+                                                            style={{ cursor: 'pointer' }}
                                                         >
                                                             {[
                                                                 { color: '#10b981' },
@@ -752,6 +764,17 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                             dataKey="anterior"
                                                             name="Periodo Anterior"
                                                             radius={[6, 6, 0, 0]}
+                                                            onClick={(data) => {
+                                                                if (data && data.tipo !== 'Balance') {
+                                                                    fetchDrillDownByType(
+                                                                        comparisonData.previous.start,
+                                                                        comparisonData.previous.end,
+                                                                        data.tipo,
+                                                                        `${data.name} Periodo Anterior`
+                                                                    );
+                                                                }
+                                                            }}
+                                                            style={{ cursor: 'pointer' }}
                                                         >
                                                             {[
                                                                 { color: '#10b98155' },
