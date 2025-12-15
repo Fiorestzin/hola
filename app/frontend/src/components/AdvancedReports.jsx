@@ -401,38 +401,30 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         </div>
 
                         {/* Tabs Navigation */}
-                        <div className="flex bg-slate-900/50 p-1 rounded-lg border border-slate-700 overflow-x-auto max-w-[300px] md:max-w-none">
+                        <div className="flex bg-slate-800/80 p-1.5 rounded-xl border border-slate-600/50 gap-1 shadow-inner" style={{ scrollbarWidth: 'none' }}>
                             <button
                                 onClick={() => setActiveTab('summary')}
-                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'summary' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'summary' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
                             >
-                                <div className="flex items-center gap-2">
-                                    <PieIcon size={16} /> <span className="hidden sm:inline">Resumen</span>
-                                </div>
+                                <PieIcon size={16} /> <span className="hidden sm:inline">Resumen</span>
                             </button>
                             <button
                                 onClick={() => setActiveTab('trends')}
-                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'trends' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'trends' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
                             >
-                                <div className="flex items-center gap-2">
-                                    <TrendingUp size={16} /> <span className="hidden sm:inline">Tendencia</span>
-                                </div>
+                                <TrendingUp size={16} /> <span className="hidden sm:inline">Tendencia</span>
                             </button>
                             <button
                                 onClick={() => setActiveTab('breakdown')}
-                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'breakdown' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'breakdown' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
                             >
-                                <div className="flex items-center gap-2">
-                                    <List size={16} /> <span className="hidden sm:inline">Desglose</span>
-                                </div>
+                                <List size={16} /> <span className="hidden sm:inline">Desglose</span>
                             </button>
                             <button
                                 onClick={() => setActiveTab('budgets')}
-                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${activeTab === 'budgets' ? 'bg-indigo-500 text-white shadow-lg' : 'text-slate-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'budgets' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
                             >
-                                <div className="flex items-center gap-2">
-                                    <Target size={16} /> <span className="hidden sm:inline">Metas</span>
-                                </div>
+                                <Target size={16} /> <span className="hidden sm:inline">Metas</span>
                             </button>
                         </div>
 
