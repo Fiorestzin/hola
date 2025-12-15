@@ -336,15 +336,27 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const diffTime = Math.abs(end - start);
     const diffDays = Math.max(Math.ceil(diffTime / (1000 * 60 * 60 * 24)), 1);
 
-    // 1. Runway (Months)
-    const monthlyExpenseAvg = totalExpense / (diffDays / 30);
-    const runway = monthlyExpenseAvg > 0 ? (totalNetWorth / monthlyExpenseAvg).toFixed(1) : "∞";
+    // 1. Runway (Months) - How long savings would last at current burn rate
+    const monthlyExpenseAvg = totalExpense / Math.max(diffDays / 30, 1);
+    let runway = "N/A";
+    if (monthlyExpenseAvg > 0 && totalNetWorth > 0) {
+        const runwayValue = totalNetWorth / monthlyExpenseAvg;
+        runway = runwayValue > 999 ? "999+" : runwayValue.toFixed(1);
+    } else if (totalNetWorth > 0 && monthlyExpenseAvg === 0) {
+        runway = "∞";
+    }
 
-    // 2. Savings Rate
-    const savingsRate = totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0;
+    // 2. Savings Rate - Capped between -100% and 100% for sensible display
+    let savingsRate = 0;
+    if (totalIncome > 0) {
+        const rawRate = ((totalIncome - totalExpense) / totalIncome) * 100;
+        savingsRate = Math.max(-100, Math.min(100, rawRate));
+    } else if (totalExpense > 0) {
+        savingsRate = -100; // If no income but expenses, worst case
+    }
 
     // 3. Burn Rate (Daily)
-    const burnRate = totalExpense / diffDays;
+    const burnRate = diffDays > 0 ? totalExpense / diffDays : 0;
 
     if (!isOpen) return null;
 
