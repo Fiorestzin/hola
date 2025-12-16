@@ -141,11 +141,17 @@ def switch_env(update: ConfigUpdate):
 
 @app.post("/config/reset")
 def reset_db_data(req: ResetRequest):
-    if req.confirmation != "fiorestzin":
-        raise HTTPException(status_code=403, detail="Frase de confirmación incorrecta.")
-        
+    # Get the current delete phrase from database
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute(sql_param("SELECT value FROM settings WHERE key = ?"), ("delete_phrase",))
+    row = cursor.fetchone()
+    current_phrase = row[0] if row else "fiorestzin"  # Default
+    
+    if req.confirmation != current_phrase:
+        conn.close()
+        raise HTTPException(status_code=403, detail="Frase de confirmación incorrecta.")
+    
     try:
         # Dangerous part: Delete all user data
         cursor.execute("DELETE FROM transactions")
@@ -552,23 +558,23 @@ def get_analysis(start_date: str = None, end_date: str = None, environment: str 
         where_clause += " AND fecha <= ?"
         params.append(end_date)
         
-    # 1. Top 10 Specific Items (by Detalle)
+    # 1. Top 10 Categorías de Gasto
     top_items_query = f'''
-        SELECT detalle as name, SUM(gasto) as value 
+        SELECT categoria as name, SUM(gasto) as value 
         FROM transactions 
         WHERE {where_clause} AND gasto > 0
-        GROUP BY detalle
+        GROUP BY categoria
         ORDER BY value DESC
         LIMIT 10
     '''
     cursor.execute(sql_param(top_items_query), params)
     top_rows = cursor.fetchall()
     
-    # 2. Payment Methods / Bank Balances (net balance: ingreso - gasto)
+    # 2. Payment Methods / Bank Usage (gastos por banco)
     payment_methods_query = f'''
-        SELECT banco as name, (SUM(ingreso) - SUM(gasto)) as value
+        SELECT banco as name, SUM(gasto) as value
         FROM transactions
-        WHERE {where_clause} AND banco IS NOT NULL AND banco != 'None'
+        WHERE {where_clause} AND banco IS NOT NULL AND banco != 'None' AND banco != '' AND gasto > 0
         GROUP BY banco
         ORDER BY value DESC
     '''
@@ -695,6 +701,55 @@ def delete_transaction(tx_id: int):
     return {"status": "ok", "message": f"Transaction {tx_id} deleted"}
 
 
+# --- Internal Transfers ---
+
+class Transfer(BaseModel):
+    fecha: str
+    banco_origen: str
+    banco_destino: str
+    monto: float
+    detalle: str = "Transferencia interna"
+    environment: str = "TEST"
+
+@app.post("/transfer")
+def create_transfer(transfer: Transfer):
+    """Create an internal transfer between two banks (creates 2 linked transactions)."""
+    if transfer.banco_origen == transfer.banco_destino:
+        raise HTTPException(status_code=400, detail="Banco origen y destino no pueden ser iguales")
+    
+    if transfer.monto <= 0:
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Transaction 1: Gasto (salida) from banco_origen
+        detalle_salida = f"↗ {transfer.detalle} → {transfer.banco_destino}"
+        cursor.execute(sql_param('''
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (transfer.fecha, 'Gasto', 'Transferencia', detalle_salida, 
+               transfer.banco_origen, 0, transfer.monto, transfer.monto, transfer.environment))
+        
+        # Transaction 2: Ingreso (entrada) to banco_destino
+        detalle_entrada = f"↘ {transfer.detalle} ← {transfer.banco_origen}"
+        cursor.execute(sql_param('''
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (transfer.fecha, 'Ingreso', 'Transferencia', detalle_entrada,
+               transfer.banco_destino, transfer.monto, 0, transfer.monto, transfer.environment))
+        
+        conn.commit()
+        return {
+            "status": "ok", 
+            "message": f"Transferencia de ${transfer.monto:,.0f} realizada: {transfer.banco_origen} → {transfer.banco_destino}"
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 # Ensure database schema includes categories
 def init_db():
@@ -772,6 +827,50 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 key TEXT UNIQUE NOT NULL,
                 value TEXT
+            )
+        ''')
+        
+        # Savings goals table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                monto_objetivo REAL NOT NULL,
+                monto_actual REAL DEFAULT 0,
+                fecha_limite TEXT,
+                frecuencia_aporte TEXT,
+                dia_aporte INTEGER,
+                icono TEXT DEFAULT '🎯',
+                color TEXT DEFAULT '#3b82f6',
+                environment TEXT DEFAULT 'TEST',
+                created_at TEXT
+            )
+        ''')
+        
+        # Savings contributions table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_contributions (
+                id SERIAL PRIMARY KEY,
+                goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
+                monto REAL NOT NULL,
+                fecha TEXT NOT NULL,
+                banco TEXT
+            )
+        ''')
+        
+        # Savings withdrawals table (PostgreSQL)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_withdrawals (
+                id SERIAL PRIMARY KEY,
+                goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
+                monto REAL NOT NULL,
+                motivo TEXT,
+                categoria TEXT,
+                banco TEXT,
+                fecha TEXT NOT NULL,
+                fecha_limite_reponer TEXT NOT NULL,
+                repuesto BOOLEAN DEFAULT FALSE,
+                fecha_repuesto TEXT
             )
         ''')
         
@@ -892,6 +991,50 @@ def init_db():
             )
         ''')
         
+        # Savings goals table (SQLite)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                monto_objetivo REAL NOT NULL,
+                monto_actual REAL DEFAULT 0,
+                fecha_limite TEXT,
+                frecuencia_aporte TEXT,
+                dia_aporte INTEGER,
+                icono TEXT DEFAULT '🎯',
+                color TEXT DEFAULT '#3b82f6',
+                environment TEXT DEFAULT 'TEST',
+                created_at TEXT
+            )
+        ''')
+        
+        # Savings contributions table (SQLite)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_contributions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
+                monto REAL NOT NULL,
+                fecha TEXT NOT NULL,
+                banco TEXT
+            )
+        ''')
+        
+        # Savings withdrawals table (SQLite)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS savings_withdrawals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
+                monto REAL NOT NULL,
+                motivo TEXT,
+                categoria TEXT,
+                banco TEXT,
+                fecha TEXT NOT NULL,
+                fecha_limite_reponer TEXT NOT NULL,
+                repuesto INTEGER DEFAULT 0,
+                fecha_repuesto TEXT
+            )
+        ''')
+        
         cursor.execute('SELECT count(*) FROM users')
         if cursor.fetchone()[0] == 0:
             hashed_pwd = ph.hash("fiorestzin")
@@ -954,6 +1097,49 @@ def delete_category(cat_id: int):
     conn.commit()
     conn.close()
     return {"status": "ok", "message": "Category deleted"}
+
+class CategoryUpdate(BaseModel):
+    nombre: str
+    tipo: str = None  # Optional, keep current if not provided
+
+@app.put("/categories/{cat_id}")
+def update_category(cat_id: int, cat: CategoryUpdate):
+    """Update an existing category's name and/or type. Also updates all transactions with the old category name."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get the old category name first
+    cursor.execute(sql_param("SELECT nombre FROM categories WHERE id = ?"), (cat_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Category not found")
+    
+    old_name = row[0] if USE_POSTGRES else row['nombre']
+    
+    # Update the category
+    if cat.tipo:
+        cursor.execute(sql_param("UPDATE categories SET nombre = ?, tipo = ? WHERE id = ?"), 
+                       (cat.nombre, cat.tipo, cat_id))
+    else:
+        cursor.execute(sql_param("UPDATE categories SET nombre = ? WHERE id = ?"), 
+                       (cat.nombre, cat_id))
+    
+    # CASCADE: Update all transactions that have the old category name
+    if old_name != cat.nombre:
+        cursor.execute(sql_param("UPDATE transactions SET categoria = ? WHERE categoria = ?"),
+                       (cat.nombre, old_name))
+        updated_count = cursor.rowcount
+    else:
+        updated_count = 0
+    
+    conn.commit()
+    conn.close()
+    return {
+        "status": "ok", 
+        "message": f"Category updated. {updated_count} transactions updated.",
+        "transactions_updated": updated_count
+    }
 
 
 
@@ -1282,4 +1468,484 @@ def export_report(start_date: str = None, end_date: str = None):
         'Content-Disposition': f'attachment; filename="reporte_finance_{start_date}_{end_date}.xlsx"'
     }
     return Response(content=output.getvalue(), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
+
+
+# --- Savings Goals ---
+
+class SavingsGoalCreate(BaseModel):
+    nombre: str
+    monto_objetivo: float
+    fecha_limite: str = None
+    frecuencia_aporte: str = None  # 'diario', 'semanal', 'mensual', or None
+    dia_aporte: int = None  # Day of week (0-6) for weekly, day of month (1-31) for monthly
+    icono: str = '🎯'
+    color: str = '#3b82f6'
+    environment: str = 'TEST'
+
+class SavingsGoalUpdate(BaseModel):
+    nombre: str = None
+    monto_objetivo: float = None
+    fecha_limite: str = None
+    frecuencia_aporte: str = None
+    dia_aporte: int = None
+    icono: str = None
+    color: str = None
+
+class SavingsContributionCreate(BaseModel):
+    monto: float
+    fecha: str = None  # Defaults to today
+    banco: str = None
+
+@app.get("/savings-goals")
+def get_savings_goals(environment: str = "TEST"):
+    """Get all savings goals for the given environment."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT id, nombre, monto_objetivo, monto_actual, fecha_limite, 
+               frecuencia_aporte, dia_aporte, icono, color, environment, created_at
+        FROM savings_goals WHERE environment = ? ORDER BY created_at DESC
+    '''), (environment,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    goals = []
+    for row in rows:
+        if USE_POSTGRES:
+            goals.append({
+                "id": row[0], "nombre": row[1], "monto_objetivo": row[2],
+                "monto_actual": row[3], "fecha_limite": row[4],
+                "frecuencia_aporte": row[5], "dia_aporte": row[6],
+                "icono": row[7], "color": row[8], "environment": row[9],
+                "created_at": row[10],
+                "porcentaje": round((row[3] / row[2]) * 100, 1) if row[2] > 0 else 0
+            })
+        else:
+            goal = dict(row)
+            goal["porcentaje"] = round((goal["monto_actual"] / goal["monto_objetivo"]) * 100, 1) if goal["monto_objetivo"] > 0 else 0
+            goals.append(goal)
+    
+    return goals
+
+@app.post("/savings-goals")
+def create_savings_goal(goal: SavingsGoalCreate):
+    """Create a new savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    try:
+        cursor.execute(sql_param('''
+            INSERT INTO savings_goals (nombre, monto_objetivo, monto_actual, fecha_limite, 
+                                        frecuencia_aporte, dia_aporte, icono, color, environment, created_at)
+            VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+        '''), (goal.nombre, goal.monto_objetivo, goal.fecha_limite, 
+               goal.frecuencia_aporte, goal.dia_aporte, goal.icono, 
+               goal.color, goal.environment, created_at))
+        conn.commit()
+        
+        # Get the new ID
+        if USE_POSTGRES:
+            cursor.execute("SELECT lastval()")
+        else:
+            cursor.execute("SELECT last_insert_rowid()")
+        new_id = cursor.fetchone()[0]
+        
+        return {"status": "ok", "message": "Meta de ahorro creada", "id": new_id}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.put("/savings-goals/{goal_id}")
+def update_savings_goal(goal_id: int, goal: SavingsGoalUpdate):
+    """Update an existing savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if exists
+    cursor.execute(sql_param("SELECT id FROM savings_goals WHERE id = ?"), (goal_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta no encontrada")
+    
+    # Build dynamic update query
+    updates = []
+    params = []
+    
+    if goal.nombre is not None:
+        updates.append("nombre = ?")
+        params.append(goal.nombre)
+    if goal.monto_objetivo is not None:
+        updates.append("monto_objetivo = ?")
+        params.append(goal.monto_objetivo)
+    if goal.fecha_limite is not None:
+        updates.append("fecha_limite = ?")
+        params.append(goal.fecha_limite if goal.fecha_limite else None)
+    if goal.frecuencia_aporte is not None:
+        updates.append("frecuencia_aporte = ?")
+        params.append(goal.frecuencia_aporte if goal.frecuencia_aporte else None)
+    if goal.dia_aporte is not None:
+        updates.append("dia_aporte = ?")
+        params.append(goal.dia_aporte)
+    if goal.icono is not None:
+        updates.append("icono = ?")
+        params.append(goal.icono)
+    if goal.color is not None:
+        updates.append("color = ?")
+        params.append(goal.color)
+    
+    if updates:
+        params.append(goal_id)
+        query = f"UPDATE savings_goals SET {', '.join(updates)} WHERE id = ?"
+        cursor.execute(sql_param(query), params)
+        conn.commit()
+    
+    conn.close()
+    return {"status": "ok", "message": "Meta actualizada"}
+
+@app.delete("/savings-goals/{goal_id}")
+def delete_savings_goal(goal_id: int):
+    """Delete a savings goal and all its contributions."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if exists
+    cursor.execute(sql_param("SELECT id FROM savings_goals WHERE id = ?"), (goal_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta no encontrada")
+    
+    # Delete contributions first (for databases without CASCADE)
+    cursor.execute(sql_param("DELETE FROM savings_contributions WHERE goal_id = ?"), (goal_id,))
+    cursor.execute(sql_param("DELETE FROM savings_goals WHERE id = ?"), (goal_id,))
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok", "message": "Meta eliminada"}
+
+@app.post("/savings-goals/{goal_id}/contribute")
+def contribute_to_goal(goal_id: int, contribution: SavingsContributionCreate):
+    """Add a contribution to a savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if goal exists
+    cursor.execute(sql_param("SELECT id, monto_actual FROM savings_goals WHERE id = ?"), (goal_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta no encontrada")
+    
+    if contribution.monto <= 0:
+        conn.close()
+        raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
+    
+    fecha = contribution.fecha or datetime.now().strftime("%Y-%m-%d")
+    
+    try:
+        # Insert contribution
+        cursor.execute(sql_param('''
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
+            VALUES (?, ?, ?, ?)
+        '''), (goal_id, contribution.monto, fecha, contribution.banco))
+        
+        # Update goal's monto_actual
+        current_amount = row[1] if USE_POSTGRES else row['monto_actual']
+        new_amount = current_amount + contribution.monto
+        cursor.execute(sql_param("UPDATE savings_goals SET monto_actual = ? WHERE id = ?"),
+                       (new_amount, goal_id))
+        
+        conn.commit()
+        return {
+            "status": "ok", 
+            "message": f"Aporte de ${contribution.monto:,.0f} registrado",
+            "nuevo_total": new_amount
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/savings-goals/{goal_id}/contributions")
+def get_goal_contributions(goal_id: int):
+    """Get all contributions for a savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if goal exists
+    cursor.execute(sql_param("SELECT id FROM savings_goals WHERE id = ?"), (goal_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta no encontrada")
+    
+    cursor.execute(sql_param('''
+        SELECT id, monto, fecha, banco FROM savings_contributions 
+        WHERE goal_id = ? ORDER BY fecha DESC
+    '''), (goal_id,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if USE_POSTGRES:
+        return [{"id": r[0], "monto": r[1], "fecha": r[2], "banco": r[3]} for r in rows]
+    return [dict(row) for row in rows]
+
+@app.get("/savings-goals/summary")
+def get_savings_summary(environment: str = "TEST"):
+    """Get summary of all savings for displaying committed amounts per bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Total saved across all goals
+    cursor.execute(sql_param('''
+        SELECT COALESCE(SUM(monto_actual), 0) as total_ahorrado,
+               COUNT(*) as num_metas
+        FROM savings_goals WHERE environment = ?
+    '''), (environment,))
+    
+    row = cursor.fetchone()
+    total_ahorrado = row[0] if row else 0
+    num_metas = row[1] if row else 0
+    
+    conn.close()
+    
+    return {
+        "total_ahorrado": total_ahorrado,
+        "num_metas": num_metas
+    }
+
+@app.get("/savings-goals/by-bank")
+def get_savings_by_bank(environment: str = "TEST"):
+    """Get total contributions grouped by bank, for showing committed amounts per bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get contributions grouped by bank (only those with a bank specified)
+    cursor.execute(sql_param('''
+        SELECT sc.banco, COALESCE(SUM(sc.monto), 0) as total_aportado
+        FROM savings_contributions sc
+        JOIN savings_goals sg ON sc.goal_id = sg.id
+        WHERE sg.environment = ? AND sc.banco IS NOT NULL AND sc.banco != ''
+        GROUP BY sc.banco
+    '''), (environment,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Return as dictionary {banco: monto}
+    result = {}
+    for row in rows:
+        banco = row[0] if USE_POSTGRES else row['banco']
+        monto = row[1] if USE_POSTGRES else row['total_aportado']
+        result[banco] = monto
+    
+    return result
+
+@app.get("/savings-goals/{goal_id}/banks")
+def get_goal_banks(goal_id: int):
+    """Get banks that have contributions to a specific goal (for withdrawal dropdown)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT banco, COALESCE(SUM(monto), 0) as total
+        FROM savings_contributions 
+        WHERE goal_id = ? AND banco IS NOT NULL AND banco != ''
+        GROUP BY banco
+        HAVING COALESCE(SUM(monto), 0) > 0
+        ORDER BY total DESC
+    '''), (goal_id,))
+    
+    rows = fetchall_as_dict(cursor)
+    conn.close()
+    
+    return rows
+
+@app.post("/savings-goals/{goal_id}/complete")
+def complete_savings_goal(goal_id: int):
+    """Complete a savings goal - removes all contributions (frees committed amounts) and deletes the goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if goal exists
+    cursor.execute(sql_param("SELECT id, nombre, monto_actual, monto_objetivo FROM savings_goals WHERE id = ?"), (goal_id,))
+    goal = cursor.fetchone()
+    if not goal:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta de ahorro no encontrada")
+    
+    # Delete all contributions for this goal (this frees the committed amounts from all banks)
+    cursor.execute(sql_param("DELETE FROM savings_contributions WHERE goal_id = ?"), (goal_id,))
+    
+    # Delete all withdrawals for this goal
+    cursor.execute(sql_param("DELETE FROM savings_withdrawals WHERE goal_id = ?"), (goal_id,))
+    
+    # Delete the goal itself
+    cursor.execute(sql_param("DELETE FROM savings_goals WHERE id = ?"), (goal_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "¡Meta completada! Los comprometidos han sido liberados."}
+
+# ============ SAVINGS WITHDRAWALS ENDPOINTS ============
+
+class SavingsWithdrawal(BaseModel):
+    monto: float
+    motivo: str = None
+    categoria: str = None
+    banco: str = None
+    fecha_limite_reponer: str
+
+@app.post("/savings-goals/{goal_id}/withdraw")
+def create_withdrawal(goal_id: int, withdrawal: SavingsWithdrawal, environment: str = "TEST"):
+    """Create a withdrawal from a savings goal - reduces the committed amount for a specific bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if goal exists
+    cursor.execute(sql_param("SELECT id, monto_actual, nombre FROM savings_goals WHERE id = ?"), (goal_id,))
+    goal = cursor.fetchone()
+    if not goal:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta de ahorro no encontrada")
+    
+    monto_actual = goal[1] if USE_POSTGRES else goal['monto_actual']
+    goal_nombre = goal[2] if USE_POSTGRES else goal['nombre']
+    
+    if withdrawal.monto > monto_actual:
+        conn.close()
+        raise HTTPException(status_code=400, detail="El monto a retirar excede el saldo de la meta")
+    
+    # Verify the bank has contributions to this goal
+    if withdrawal.banco:
+        cursor.execute(sql_param('''
+            SELECT COALESCE(SUM(monto), 0) as total 
+            FROM savings_contributions 
+            WHERE goal_id = ? AND banco = ?
+        '''), (goal_id, withdrawal.banco))
+        bank_total = cursor.fetchone()[0]
+        if bank_total < withdrawal.monto:
+            conn.close()
+            raise HTTPException(status_code=400, detail=f"El banco {withdrawal.banco} solo tiene ${bank_total:,.0f} aportado a esta meta")
+    
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    
+    # 1. Create the withdrawal record (for tracking pending repayments)
+    cursor.execute(sql_param('''
+        INSERT INTO savings_withdrawals (goal_id, monto, motivo, categoria, banco, fecha, fecha_limite_reponer, repuesto)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    '''), (goal_id, withdrawal.monto, withdrawal.motivo, withdrawal.categoria, 
+           withdrawal.banco, fecha_hoy, withdrawal.fecha_limite_reponer, False if USE_POSTGRES else 0))
+    
+    # 2. Create a NEGATIVE contribution to reduce the bank's committed amount
+    if withdrawal.banco:
+        cursor.execute(sql_param('''
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
+            VALUES (?, ?, ?, ?)
+        '''), (goal_id, -withdrawal.monto, fecha_hoy, withdrawal.banco))
+    
+    # 3. Reduce monto_actual of the goal
+    nuevo_monto = monto_actual - withdrawal.monto
+    cursor.execute(sql_param("UPDATE savings_goals SET monto_actual = ? WHERE id = ?"), (nuevo_monto, goal_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Retiro registrado. El saldo comprometido del banco se ha reducido.", "nuevo_monto": nuevo_monto}
+
+@app.get("/savings-goals/{goal_id}/withdrawals")
+def get_goal_withdrawals(goal_id: int):
+    """Get all withdrawals for a specific savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT id, monto, motivo, categoria, banco, fecha, fecha_limite_reponer, repuesto, fecha_repuesto
+        FROM savings_withdrawals WHERE goal_id = ? ORDER BY fecha DESC
+    '''), (goal_id,))
+    
+    rows = fetchall_as_dict(cursor)
+    conn.close()
+    
+    # Convert repuesto to boolean for consistency
+    for row in rows:
+        row['repuesto'] = bool(row['repuesto'])
+    
+    return rows
+
+@app.get("/savings-withdrawals/pending")
+def get_pending_withdrawals(environment: str = "TEST"):
+    """Get all pending (not repaid) withdrawals across all goals."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT sw.id, sw.goal_id, sg.nombre as goal_nombre, sw.monto, sw.motivo, 
+               sw.categoria, sw.banco, sw.fecha, sw.fecha_limite_reponer
+        FROM savings_withdrawals sw
+        JOIN savings_goals sg ON sw.goal_id = sg.id
+        WHERE sg.environment = ? AND (sw.repuesto = ? OR sw.repuesto IS NULL)
+        ORDER BY sw.fecha_limite_reponer ASC
+    '''), (environment, False if USE_POSTGRES else 0))
+    
+    rows = fetchall_as_dict(cursor)
+    conn.close()
+    
+    return rows
+
+@app.put("/savings-withdrawals/{withdrawal_id}/repay")
+def repay_withdrawal(withdrawal_id: int, monto: float = None):
+    """Mark a withdrawal as repaid (adds contribution back to the goal and bank)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get withdrawal info including banco
+    cursor.execute(sql_param('''
+        SELECT id, goal_id, monto, repuesto, banco FROM savings_withdrawals WHERE id = ?
+    '''), (withdrawal_id,))
+    withdrawal = cursor.fetchone()
+    
+    if not withdrawal:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Retiro no encontrado")
+    
+    goal_id = withdrawal[1] if USE_POSTGRES else withdrawal['goal_id']
+    withdrawal_monto = withdrawal[2] if USE_POSTGRES else withdrawal['monto']
+    repuesto = withdrawal[3] if USE_POSTGRES else withdrawal['repuesto']
+    banco = withdrawal[4] if USE_POSTGRES else withdrawal['banco']
+    
+    if repuesto:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Este retiro ya fue repuesto")
+    
+    fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+    
+    # Mark as repaid
+    cursor.execute(sql_param('''
+        UPDATE savings_withdrawals SET repuesto = ?, fecha_repuesto = ? WHERE id = ?
+    '''), (True if USE_POSTGRES else 1, fecha_hoy, withdrawal_id))
+    
+    # Add the amount back to the goal
+    cursor.execute(sql_param('''
+        UPDATE savings_goals SET monto_actual = monto_actual + ? WHERE id = ?
+    '''), (withdrawal_monto, goal_id))
+    
+    # Create a POSITIVE contribution to restore the bank's committed amount
+    if banco:
+        cursor.execute(sql_param('''
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
+            VALUES (?, ?, ?, ?)
+        '''), (goal_id, withdrawal_monto, fecha_hoy, banco))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"message": "Retiro repuesto. El saldo comprometido del banco ha sido restaurado."}
 

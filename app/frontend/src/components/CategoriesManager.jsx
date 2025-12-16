@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Tag } from 'lucide-react';
+import { X, Plus, Trash2, Tag, Pencil, Check, XCircle } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function CategoriesManager({ isOpen, onClose, environment = "TEST" }) {
+export default function CategoriesManager({ isOpen, onClose, environment = "TEST", onCategoryChange }) {
     const [categories, setCategories] = useState([]);
     const [newCat, setNewCat] = useState('');
     const [newType, setNewType] = useState('Gasto');
+
+    // Edit state
+    const [editingId, setEditingId] = useState(null);
+    const [editName, setEditName] = useState('');
+    const [editType, setEditType] = useState('');
 
     useEffect(() => {
         if (isOpen) fetchCategories();
@@ -56,6 +61,40 @@ export default function CategoriesManager({ isOpen, onClose, environment = "TEST
         }
     };
 
+    const handleStartEdit = (cat) => {
+        setEditingId(cat.id);
+        setEditName(cat.nombre);
+        setEditType(cat.tipo);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingId(null);
+        setEditName('');
+        setEditType('');
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editName.trim()) return;
+
+        try {
+            const res = await fetch(`${API_URL}/categories/${editingId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ nombre: editName, tipo: editType })
+            });
+            if (res.ok) {
+                setEditingId(null);
+                setEditName('');
+                setEditType('');
+                fetchCategories();
+                // Notify parent to refresh transactions (categories may have been renamed)
+                if (onCategoryChange) onCategoryChange();
+            }
+        } catch (error) {
+            console.error("Error updating category:", error);
+        }
+    };
+
     if (!isOpen) return null;
 
     return (
@@ -76,16 +115,68 @@ export default function CategoriesManager({ isOpen, onClose, environment = "TEST
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     {categories.map((cat) => (
                         <div key={cat.id} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors">
-                            <div className="flex items-center gap-3">
-                                <span className={`w-2 h-2 rounded-full ${cat.tipo === 'Ingreso' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                                <span className="text-slate-200">{cat.nombre}</span>
-                            </div>
-                            <button
-                                onClick={() => handleDelete(cat.id)}
-                                className="text-slate-500 hover:text-rose-400 p-2 transition-colors"
-                            >
-                                <Trash2 size={16} />
-                            </button>
+                            {editingId === cat.id ? (
+                                /* Edit Mode */
+                                <div className="flex-1 flex items-center gap-2">
+                                    <select
+                                        className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                                        value={editType}
+                                        onChange={(e) => setEditType(e.target.value)}
+                                    >
+                                        <option value="Gasto">Gasto</option>
+                                        <option value="Ingreso">Ingreso</option>
+                                    </select>
+                                    <input
+                                        type="text"
+                                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-indigo-500"
+                                        value={editName}
+                                        onChange={(e) => setEditName(e.target.value)}
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') handleSaveEdit();
+                                            if (e.key === 'Escape') handleCancelEdit();
+                                        }}
+                                    />
+                                    <button
+                                        onClick={handleSaveEdit}
+                                        className="text-emerald-400 hover:text-emerald-300 p-1 transition-colors"
+                                        title="Guardar"
+                                    >
+                                        <Check size={18} />
+                                    </button>
+                                    <button
+                                        onClick={handleCancelEdit}
+                                        className="text-slate-400 hover:text-rose-400 p-1 transition-colors"
+                                        title="Cancelar"
+                                    >
+                                        <XCircle size={18} />
+                                    </button>
+                                </div>
+                            ) : (
+                                /* View Mode */
+                                <>
+                                    <div className="flex items-center gap-3">
+                                        <span className={`w-2 h-2 rounded-full ${cat.tipo === 'Ingreso' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                                        <span className="text-slate-200">{cat.nombre}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={() => handleStartEdit(cat)}
+                                            className="text-slate-500 hover:text-indigo-400 p-2 transition-colors"
+                                            title="Editar"
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(cat.id)}
+                                            className="text-slate-500 hover:text-rose-400 p-2 transition-colors"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     ))}
                     {categories.length === 0 && <p className="text-center text-slate-500 py-4">No hay categorías aun.</p>}

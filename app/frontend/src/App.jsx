@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
 import BanksManager from './components/BanksManager';
+import BudgetManager from './components/BudgetManager';
 import AdvancedReports from './components/AdvancedReports';
 import SettingsPanel from './components/SettingsPanel';
+import TransferModal from './components/TransferModal';
+import SavingsGoalsModal from './components/SavingsGoalsModal';
 import { EnvironmentControls } from "./components/EnvironmentControls";
 import Login from "./components/Login";
 import { API_URL } from "./config";
@@ -14,6 +17,9 @@ function App() {
   const [transactions, setTransactions] = useState([]);
   const [banks, setBanks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [savingsSummary, setSavingsSummary] = useState({ total_ahorrado: 0, num_metas: 0 });
+  const [savingsByBank, setSavingsByBank] = useState({}); // {banco: monto_aportado}
+  const [pendingByBank, setPendingByBank] = useState({}); // {banco: monto_pendiente_reponer}
 
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -33,6 +39,15 @@ function App() {
 
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+  // Transfer State
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+
+  // Savings Goals State
+  const [isSavingsOpen, setIsSavingsOpen] = useState(false);
+
+  // Budget State
+  const [isBudgetOpen, setIsBudgetOpen] = useState(false);
 
   // Check if already logged in on startup
   useEffect(() => {
@@ -72,9 +87,24 @@ function App() {
     const password = prompt('Ingresa tu contraseña para eliminar:');
     if (!password) return;
 
-    // Verify password is correct (simple client-side check)
-    if (password !== 'fiorestzin') {
-      alert('Contraseña incorrecta');
+    // Get the current delete phrase from the database
+    try {
+      const phraseRes = await fetch(`${API_URL}/settings/delete-phrase`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (phraseRes.ok) {
+        const data = await phraseRes.json();
+        if (password !== data.phrase) {
+          alert('Contraseña incorrecta');
+          return;
+        }
+      } else {
+        alert('Error al verificar contraseña');
+        return;
+      }
+    } catch (e) {
+      console.error('Error fetching delete phrase:', e);
+      alert('Error al verificar contraseña');
       return;
     }
 
@@ -118,6 +148,38 @@ function App() {
       const bankRes = await fetch(`${API_URL}/summary/banks?environment=${env}`);
       const bankData = await bankRes.json();
       setBanks(bankData);
+
+      // Fetch savings summary for committed balance display
+      try {
+        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=${env}`);
+        if (savingsRes.ok) {
+          const savingsData = await savingsRes.json();
+          setSavingsSummary(savingsData);
+        }
+
+        // Fetch per-bank savings
+        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=${env}`);
+        if (byBankRes.ok) {
+          const byBankData = await byBankRes.json();
+          setSavingsByBank(byBankData);
+        }
+
+        // Fetch pending withdrawals by bank
+        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=${env}`);
+        if (pendingRes.ok) {
+          const pendingData = await pendingRes.json();
+          // Group by bank
+          const grouped = {};
+          pendingData.forEach(w => {
+            if (w.banco) {
+              grouped[w.banco] = (grouped[w.banco] || 0) + w.monto;
+            }
+          });
+          setPendingByBank(grouped);
+        }
+      } catch (e) {
+        console.error("Error fetching savings summary:", e);
+      }
 
       setLoading(false);
     } catch (error) {
@@ -200,7 +262,10 @@ function App() {
     </div>
   </div>;
 
+
   const totalSaldo = banks.reduce((acc, b) => acc + (b.saldo || 0), 0);
+  const totalAhorrado = savingsSummary?.total_ahorrado || 0;
+  const saldoDisponible = totalSaldo - totalAhorrado;
 
   // Prepare chart data (Last 20 transactions simplified)
   const chartData = [...transactions].reverse().map(t => ({
@@ -224,8 +289,16 @@ function App() {
           </div>
           <div className="flex items-center gap-6">
             <div className="text-center md:text-right">
-              <p className="text-sm text-slate-400">Patrimonio Neto Estimado</p>
-              <p className={`text-3xl font-bold ${totalSaldo >= 0 ? 'text-white' : 'text-rose-400'}`}>{fmt(totalSaldo)}</p>
+              <p className="text-sm text-slate-400">Patrimonio Neto</p>
+              <p className={`text-2xl font-bold ${totalSaldo >= 0 ? 'text-white' : 'text-rose-400'}`}>{fmt(totalSaldo)}</p>
+              {totalAhorrado > 0 && (
+                <div className="mt-1 flex flex-col items-end">
+                  <span className="text-[10px] text-emerald-400/80 uppercase tracking-wider font-bold">Disponible Real</span>
+                  <span className={`text-lg font-bold ${saldoDisponible >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                    {fmt(saldoDisponible)}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex gap-2 items-center">
@@ -277,22 +350,75 @@ function App() {
             </h2>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {banks.map((bank, idx) => (
-              <div key={idx} className="bg-slate-800/80 p-5 rounded-xl border border-slate-700 hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/5 group">
+            {banks.map((bank, idx) => {
+              const bankName = bank.banco || "Sin Banco";
+              const aportadoDesdeBanco = savingsByBank[bankName] || 0;
+              const pendingReponer = pendingByBank[bankName] || 0;
+              const disponible = bank.saldo - aportadoDesdeBanco;
+
+              return (
+                <div key={idx} className="bg-slate-800/80 p-5 rounded-xl border border-slate-700 hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/1 group">
+                  <div className="flex justify-between items-start mb-2">
+                    <h3 className="font-bold text-lg text-slate-200 group-hover:text-blue-300 transition-colors">{bankName}</h3>
+                    <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full ${bank.saldo >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                      {bank.saldo >= 0 ? 'Activo' : 'Deuda'}
+                    </span>
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-sm text-slate-500">Saldo Real</p>
+                    <p className={`text-2xl font-bold truncate ${bank.saldo < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                      {fmt(bank.saldo)}
+                    </p>
+                  </div>
+                  {aportadoDesdeBanco > 0 && (
+                    <div className="mt-2 pt-2 border-t border-slate-700/50">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-amber-400/70">🐷 Comprometido:</span>
+                        <span className="text-amber-300">{fmt(aportadoDesdeBanco)}</span>
+                      </div>
+                      <div className="flex justify-between text-sm mt-1">
+                        <span className="text-slate-400">Disponible:</span>
+                        <span className={`font-bold ${disponible < 0 ? 'text-rose-400' : 'text-slate-200'}`}>{fmt(disponible)}</span>
+                      </div>
+                    </div>
+                  )}
+                  {pendingReponer > 0 && (
+                    <div className="mt-2 p-2 bg-amber-900/30 border border-amber-600/50 rounded-lg">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-amber-400 font-semibold">⚠️ Pendiente reponer:</span>
+                        <span className="text-amber-300 font-bold">{fmt(pendingReponer)}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Savings Summary Card */}
+            {savingsSummary.num_metas > 0 && (
+              <div className="bg-gradient-to-br from-emerald-900/50 to-teal-900/50 p-5 rounded-xl border border-emerald-700/50 hover:border-emerald-500/50 transition-all hover:shadow-lg hover:shadow-emerald-500/10 group cursor-pointer" onClick={() => setIsSavingsOpen(true)}>
                 <div className="flex justify-between items-start mb-2">
-                  <h3 className="font-bold text-lg text-slate-200 group-hover:text-blue-300 transition-colors">{bank.banco || "Sin Banco"}</h3>
-                  <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full ${bank.saldo >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                    {bank.saldo >= 0 ? 'Activo' : 'Deuda'}
+                  <h3 className="font-bold text-lg text-emerald-200 group-hover:text-emerald-100 transition-colors flex items-center gap-2">
+                    <PiggyBank size={18} /> Ahorros
+                  </h3>
+                  <span className="text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-300">
+                    {savingsSummary.num_metas} {savingsSummary.num_metas === 1 ? 'meta' : 'metas'}
                   </span>
                 </div>
                 <div className="mt-4">
-                  <p className="text-sm text-slate-500">Saldo Calculado</p>
-                  <p className={`text-2xl font-bold truncate ${bank.saldo < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                    {fmt(bank.saldo)}
+                  <p className="text-sm text-emerald-400/70">Total Comprometido</p>
+                  <p className="text-2xl font-bold truncate text-emerald-300">
+                    {fmt(savingsSummary.total_ahorrado)}
+                  </p>
+                </div>
+                <div className="mt-2 pt-2 border-t border-emerald-700/30">
+                  <p className="text-xs text-emerald-400/60">Disponible sin ahorros:</p>
+                  <p className="text-sm font-semibold text-slate-300">
+                    {fmt(totalSaldo - savingsSummary.total_ahorrado)}
                   </p>
                 </div>
               </div>
-            ))}
+            )}
           </div>
         </section>
 
@@ -364,6 +490,24 @@ function App() {
                 >
                   <TrendingDown size={18} /> Registrar Gasto
                 </button>
+                <button
+                  onClick={() => setIsTransferOpen(true)}
+                  className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-cyan-900/20 flex items-center justify-center gap-2"
+                >
+                  <ArrowRightLeft size={18} /> Transferencia Interna
+                </button>
+                <button
+                  onClick={() => setIsSavingsOpen(true)}
+                  className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2"
+                >
+                  <PiggyBank size={18} /> Metas de Ahorro
+                </button>
+                <button
+                  onClick={() => setIsBudgetOpen(true)}
+                  className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
+                >
+                  <Target size={18} /> Presupuestos
+                </button>
               </div>
             </div>
 
@@ -416,6 +560,7 @@ function App() {
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
         environment={currentEnv}
+        onCategoryChange={() => fetchData()}
       />
 
       {/* Banks Manager */}
@@ -429,7 +574,7 @@ function App() {
       <AdvancedReports
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
-        totalNetWorth={totalSaldo}
+        totalNetWorth={saldoDisponible}
         environment={currentEnv}
       />
 
@@ -438,6 +583,29 @@ function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         token={token}
+      />
+
+      {/* Transfer Modal */}
+      <TransferModal
+        isOpen={isTransferOpen}
+        onClose={() => setIsTransferOpen(false)}
+        environment={currentEnv}
+        onTransferComplete={() => fetchData()}
+      />
+
+      {/* Savings Goals Modal */}
+      <SavingsGoalsModal
+        isOpen={isSavingsOpen}
+        onClose={() => setIsSavingsOpen(false)}
+        environment={currentEnv}
+        onGoalChange={() => fetchData()}
+      />
+
+      {/* Budget Manager Modal */}
+      <BudgetManager
+        isOpen={isBudgetOpen}
+        onClose={() => setIsBudgetOpen(false)}
+        environment={currentEnv}
       />
     </div >
   );

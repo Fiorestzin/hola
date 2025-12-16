@@ -48,8 +48,22 @@ export function EnvironmentControls() {
     };
 
     const handleReset = async () => {
-        if (resetPhrase !== "fiorestzin") {
-            alert("Frase de confirmación incorrecta.");
+        // Get the current delete phrase from the database
+        try {
+            const phraseRes = await fetch(`${API_URL}/settings/delete-phrase`);
+            if (phraseRes.ok) {
+                const data = await phraseRes.json();
+                if (resetPhrase !== data.phrase) {
+                    alert("Frase de confirmación incorrecta.");
+                    return;
+                }
+            } else {
+                alert("Error al verificar frase");
+                return;
+            }
+        } catch (e) {
+            console.error('Error fetching delete phrase:', e);
+            alert("Error al verificar frase");
             return;
         }
 

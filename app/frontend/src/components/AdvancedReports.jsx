@@ -5,10 +5,9 @@ import {
 } from 'recharts';
 import {
     X, Calendar, PieChart as PieIcon, BarChart3, Hourglass,
-    PiggyBank, Flame, TrendingUp, List, CreditCard, Target, AlertCircle, Download
+    PiggyBank, Flame, TrendingUp, List, CreditCard, AlertCircle, Download
 } from 'lucide-react';
 import DrillDownModal from './DrillDownModal';
-import BudgetManager from './BudgetManager';
 import SubscriptionsModal from './SubscriptionsModal';
 import { API_URL } from "../config";
 
@@ -294,12 +293,12 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 
         const itemName = data.name; // When clicking Bar, data is the item { name, value }
 
-        // Fetch History
+        // Fetch History by categoria
         try {
             const query = new URLSearchParams({
                 start_date: dateRange.start,
                 end_date: dateRange.end,
-                filter_col: 'detalle',
+                filter_col: 'categoria',
                 filter_val: itemName
             });
             const res = await fetch(`${API_URL}/history?${query}`);
@@ -310,7 +309,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             setDdEvolution([]);
         }
 
-        fetchDrillDown({ detalle: itemName }, `Detalle: ${itemName}`);
+        fetchDrillDown({ category: itemName }, `Categoría: ${itemName}`);
     };
 
     const handleBankClick = (data) => {
@@ -334,16 +333,46 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const start = new Date(dateRange.start);
     const end = new Date(dateRange.end);
     const diffTime = Math.abs(end - start);
-    const diffDays = Math.max(Math.ceil(diffTime / (1000 * 60 * 60 * 24)), 1);
+    const diffDays = Math.max(Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1, 1); // +1 para incluir ambos extremos
 
-    // 1. Runway (Months) - How long savings would last at current burn rate
-    const monthlyExpenseAvg = totalExpense / Math.max(diffDays / 30, 1);
+    // Función helper para formatear días de libertad en formato legible
+    const formatDaysOfFreedom = (days) => {
+        if (days === "∞" || days === "N/A") return days;
+        const numDays = parseFloat(days);
+        if (isNaN(numDays) || numDays < 0) return "N/A";
+
+        if (numDays < 30) {
+            return `${Math.round(numDays)} días`;
+        } else if (numDays < 365) {
+            const months = Math.floor(numDays / 30);
+            const remainingDays = Math.round(numDays % 30);
+            if (remainingDays > 0) {
+                return `${months} mes${months !== 1 ? 'es' : ''}, ${remainingDays} días`;
+            }
+            return `${months} mes${months !== 1 ? 'es' : ''}`;
+        } else {
+            const years = Math.floor(numDays / 365);
+            const remainingMonths = Math.floor((numDays % 365) / 30);
+            let result = `${years} año${years !== 1 ? 's' : ''}`;
+            if (remainingMonths > 0) {
+                result += `, ${remainingMonths} mes${remainingMonths !== 1 ? 'es' : ''}`;
+            }
+            return result;
+        }
+    };
+
+    // 1. Libertad Financiera - Ahorro del periodo / Gasto diario
+    // Fórmula: (Ingresos - Gastos del periodo) / (Gastos / Días) = Días de libertad
+    const periodSavings = totalIncome - totalExpense; // Ahorro del periodo
     let runway = "N/A";
-    if (monthlyExpenseAvg > 0 && totalNetWorth > 0) {
-        const runwayValue = totalNetWorth / monthlyExpenseAvg;
-        runway = runwayValue > 999 ? "999+" : runwayValue.toFixed(1);
-    } else if (totalNetWorth > 0 && monthlyExpenseAvg === 0) {
+    if (totalExpense > 0 && periodSavings > 0) {
+        const dailyExpense = totalExpense / diffDays;
+        const daysOfFreedom = periodSavings / dailyExpense;
+        runway = daysOfFreedom > 36500 ? "∞" : formatDaysOfFreedom(daysOfFreedom);
+    } else if (periodSavings > 0 && totalExpense === 0) {
         runway = "∞";
+    } else if (periodSavings <= 0) {
+        runway = "0 días"; // Si no hubo ahorro o hubo pérdida
     }
 
     // 2. Savings Rate - Capped between -100% and 100% for sensible display
@@ -355,7 +384,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         savingsRate = -100; // If no income but expenses, worst case
     }
 
-    // 3. Burn Rate (Daily)
+    // 3. Burn Rate (Daily) - Usando días reales del periodo
     const burnRate = diffDays > 0 ? totalExpense / diffDays : 0;
 
     if (!isOpen) return null;
@@ -432,12 +461,6 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             >
                                 <List size={16} /> <span className="hidden sm:inline">Desglose</span>
                             </button>
-                            <button
-                                onClick={() => setActiveTab('budgets')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'budgets' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
-                            >
-                                <Target size={16} /> <span className="hidden sm:inline">Metas</span>
-                            </button>
                         </div>
 
                         <button onClick={onClose} className="p-2 bg-slate-700 rounded-lg hover:bg-slate-600 transition-colors text-white">
@@ -460,9 +483,9 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                 {/* KPI Cards */}
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                     <KpiCard
-                                        title="Runway"
-                                        value={`${runway} meses`}
-                                        sub="Libertad financiera teórica"
+                                        title="Libertad Financiera"
+                                        value={runway}
+                                        sub="Tiempo que durarían tus ahorros"
                                         icon={<Hourglass size={20} />}
                                         color="indigo"
                                     />
@@ -820,8 +843,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             <div className="space-y-8 animate-in fade-in zoom-in duration-300">
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                                    {/* Top 10 Expenses */}
-                                    <ChartCard title="Top 10 Gastos Individuales" icon={<List className="text-yellow-400" size={20} />}>
+                                    {/* Top 10 Categories */}
+                                    <ChartCard title="Top 10 Categorías" icon={<List className="text-yellow-400" size={20} />}>
                                         {topExpenses.length > 0 ? (
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <BarChart
@@ -900,12 +923,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             </div>
                         )}
 
-                        {/* --- TAB: BUDGETS --- */}
-                        {activeTab === 'budgets' && (
-                            <div className="animate-in fade-in zoom-in duration-300">
-                                <BudgetManager isOpen={true} environment={environment} />
-                            </div>
-                        )}
+
 
                     </div>
                 )}
