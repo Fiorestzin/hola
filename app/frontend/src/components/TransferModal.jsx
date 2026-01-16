@@ -172,34 +172,6 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                         />
                     </div>
 
-                    {/* Date */}
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
-                            <Calendar size={14} /> Fecha
-                        </label>
-                        <input
-                            type="date"
-                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                            value={fecha}
-                            onChange={(e) => setFecha(e.target.value)}
-                            required
-                        />
-                    </div>
-
-                    {/* Detail */}
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
-                            <FileText size={14} /> Detalle (opcional)
-                        </label>
-                        <input
-                            type="text"
-                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                            placeholder="Transferencia interna"
-                            value={detalle}
-                            onChange={(e) => setDetalle(e.target.value)}
-                        />
-                    </div>
-
                     {/* Error */}
                     {error && (
                         <div className="bg-rose-900/50 border border-rose-700 text-rose-300 px-3 py-2 rounded-lg text-sm">
