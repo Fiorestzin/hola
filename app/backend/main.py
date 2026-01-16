@@ -359,7 +359,8 @@ def get_transactions(
 ):
     conn = get_db_connection()
     
-    real_query = "SELECT * FROM transactions WHERE environment = ?"
+    # Exclude internal transfers from transaction list
+    real_query = "SELECT * FROM transactions WHERE environment = ? AND categoria != 'Transferencia'"
     real_params = [environment]
     
     if start_date:
@@ -435,11 +436,11 @@ def get_reports(start_date: str = None, end_date: str = None, environment: str =
         params.append(end_date)
 
 
-    # 1. Category Breakdown (Pie Chart) - ONLY Expenses for now
+    # 1. Category Breakdown (Pie Chart) - ONLY Expenses, exclude transfers
     cat_query = f'''
         SELECT categoria as name, SUM(gasto) as value
         FROM transactions 
-        WHERE {where_clause} AND gasto > 0
+        WHERE {where_clause} AND gasto > 0 AND categoria != 'Transferencia'
         GROUP BY categoria
         ORDER BY value DESC
     '''
@@ -452,8 +453,8 @@ def get_reports(start_date: str = None, end_date: str = None, environment: str =
     else:
         cat_data = [dict(row) for row in cat_rows]
 
-    # 2. Monthly History (Bar Chart)
-    hist_query = f"SELECT fecha, ingreso, gasto FROM transactions WHERE {where_clause}"
+    # 2. Monthly History (Bar Chart) - exclude transfers
+    hist_query = f"SELECT fecha, ingreso, gasto FROM transactions WHERE {where_clause} AND categoria != 'Transferencia'"
     df = pd.read_sql_query(sql_param(hist_query), conn, params=params)
     
     history_data = []
@@ -558,11 +559,11 @@ def get_analysis(start_date: str = None, end_date: str = None, environment: str 
         where_clause += " AND fecha <= ?"
         params.append(end_date)
         
-    # 1. Top 10 Categorías de Gasto
+    # 1. Top 10 Categorías de Gasto (exclude transfers)
     top_items_query = f'''
         SELECT categoria as name, SUM(gasto) as value 
         FROM transactions 
-        WHERE {where_clause} AND gasto > 0
+        WHERE {where_clause} AND gasto > 0 AND categoria != 'Transferencia'
         GROUP BY categoria
         ORDER BY value DESC
         LIMIT 10
@@ -570,11 +571,11 @@ def get_analysis(start_date: str = None, end_date: str = None, environment: str 
     cursor.execute(sql_param(top_items_query), params)
     top_rows = cursor.fetchall()
     
-    # 2. Payment Methods / Bank Usage (gastos por banco)
+    # 2. Payment Methods / Bank Usage (gastos por banco, exclude transfers)
     payment_methods_query = f'''
         SELECT banco as name, SUM(gasto) as value
         FROM transactions
-        WHERE {where_clause} AND banco IS NOT NULL AND banco != 'None' AND banco != '' AND gasto > 0
+        WHERE {where_clause} AND banco IS NOT NULL AND banco != 'None' AND banco != '' AND gasto > 0 AND categoria != 'Transferencia'
         GROUP BY banco
         ORDER BY value DESC
     '''
@@ -660,17 +661,18 @@ def create_transaction(tx: Transaction):
     ingreso = 0
     gasto = 0
     
+    monto_abs = abs(tx.monto)
     if tx.tipo == 'Ingreso':
-        ingreso = tx.monto
+        ingreso = monto_abs
     else:
-        gasto = tx.monto
+        gasto = monto_abs
         
     try:
         print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}")
         cursor.execute(sql_param('''
             INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, tx.monto, tx.environment))
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, monto_abs, tx.environment))
         
         conn.commit()
         conn.close()
@@ -699,6 +701,75 @@ def delete_transaction(tx_id: int):
     conn.commit()
     conn.close()
     return {"status": "ok", "message": f"Transaction {tx_id} deleted"}
+
+
+class TransactionUpdate(BaseModel):
+    fecha: str = None
+    tipo: str = None
+    categoria: str = None
+    detalle: str = None
+    banco: str = None
+    monto: float = None
+
+@app.put("/transaction/{tx_id}")
+def update_transaction(tx_id: int, tx: TransactionUpdate):
+    """Update an existing transaction by ID"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if transaction exists
+    cursor.execute(sql_param("SELECT * FROM transactions WHERE id = ?"), (tx_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Build update query dynamically based on provided fields
+    updates = []
+    params = []
+    
+    if tx.fecha is not None:
+        updates.append("fecha = ?")
+        params.append(tx.fecha)
+    if tx.tipo is not None:
+        updates.append("tipo = ?")
+        params.append(tx.tipo)
+    if tx.categoria is not None:
+        updates.append("categoria = ?")
+        params.append(tx.categoria)
+    if tx.detalle is not None:
+        updates.append("detalle = ?")
+        params.append(tx.detalle)
+    if tx.banco is not None:
+        updates.append("banco = ?")
+        params.append(tx.banco)
+    if tx.monto is not None:
+        monto_abs = abs(tx.monto)
+        updates.append("monto = ?")
+        params.append(monto_abs)
+        # Also update ingreso/gasto based on tipo
+        current_tipo = tx.tipo if tx.tipo else (row[2] if USE_POSTGRES else row['tipo'])
+        if current_tipo == 'Ingreso':
+            updates.append("ingreso = ?")
+            params.append(monto_abs)
+            updates.append("gasto = ?")
+            params.append(0)
+        else:
+            updates.append("ingreso = ?")
+            params.append(0)
+            updates.append("gasto = ?")
+            params.append(monto_abs)
+    
+    if not updates:
+        conn.close()
+        return {"status": "ok", "message": "No changes provided"}
+    
+    params.append(tx_id)
+    query = f"UPDATE transactions SET {', '.join(updates)} WHERE id = ?"
+    cursor.execute(sql_param(query), params)
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": f"Transaction {tx_id} updated"}
 
 
 # --- Internal Transfers ---
@@ -779,9 +850,16 @@ def init_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL,
-                UNIQUE(category, month)
+                environment TEXT DEFAULT 'TEST',
+                UNIQUE(category, month, environment)
             )
         ''')
+        
+        # Migration: Add environment column to budgets if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'TEST'")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS categories (
@@ -926,9 +1004,16 @@ def init_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL,
-                UNIQUE(category, month)
+                environment TEXT DEFAULT 'TEST',
+                UNIQUE(category, month, environment)
             )
         ''')
+        
+        # Migration: Add environment column to budgets if missing
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN environment TEXT DEFAULT 'TEST'")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS categories (
@@ -1200,15 +1285,22 @@ def delete_bank(bank_id: int):
 class Budget(BaseModel):
     category: str
     amount: float
-    month: str # YYYY-MM
+    month: str  # YYYY-MM
+    environment: str = "TEST"
+
+class BudgetUpdate(BaseModel):
+    category: str = None
+    amount: float = None
+    month: str = None
 
 @app.get("/budgets")
 def get_budgets(month: str = None, environment: str = "TEST"):
+    """Get all budgets for the given environment, optionally filtered by month."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    query = "SELECT id, category, amount, month FROM budgets WHERE 1=1"
-    params = []
+    query = "SELECT id, category, amount, month, environment FROM budgets WHERE environment = ?"
+    params = [environment]
     
     if month:
         query += " AND month = ?"
@@ -1222,19 +1314,19 @@ def get_budgets(month: str = None, environment: str = "TEST"):
     budgets_with_progress = []
     for r in rows:
         if USE_POSTGRES:
-            b = {"id": r[0], "category": r[1], "amount": r[2], "month": r[3]}
+            b = {"id": r[0], "category": r[1], "amount": r[2], "month": r[3], "environment": r[4]}
         else:
             b = dict(r)
         
         cat = b['category']
         m = b['month']
         
-        # SQL to sum expenses - use LEFT() for PostgreSQL, strftime for SQLite
+        # SQL to sum expenses - use TO_CHAR for PostgreSQL, strftime for SQLite
         if USE_POSTGRES:
             sum_query = '''
                 SELECT COALESCE(SUM(gasto), 0) 
                 FROM transactions 
-                WHERE categoria = %s AND LEFT(fecha, 7) = %s AND environment = %s
+                WHERE categoria = %s AND TO_CHAR(fecha::date, 'YYYY-MM') = %s AND environment = %s
             '''
         else:
             sum_query = '''
@@ -1245,45 +1337,107 @@ def get_budgets(month: str = None, environment: str = "TEST"):
         cursor.execute(sum_query, (cat, m, environment))
         spent = cursor.fetchone()[0] or 0
         b['spent'] = spent
-        b['percentage'] = (spent / b['amount']) * 100 if b['amount'] > 0 else 0
+        b['percentage'] = round((spent / b['amount']) * 100, 1) if b['amount'] > 0 else 0
+        b['remaining'] = max(0, b['amount'] - spent)
+        b['exceeded'] = spent > b['amount']
         budgets_with_progress.append(b)
         
     conn.close()
     return budgets_with_progress
 
 @app.post("/budgets")
-def set_budget(budget: Budget):
+def create_budget(budget: Budget):
+    """Create a new budget or update if category+month+environment already exists."""
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         # UPSERT: PostgreSQL uses ON CONFLICT, SQLite uses INSERT OR REPLACE
         if USE_POSTGRES:
             cursor.execute('''
-                INSERT INTO budgets (category, amount, month)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (category, month) DO UPDATE SET amount = EXCLUDED.amount
-            ''', (budget.category, budget.amount, budget.month))
+                INSERT INTO budgets (category, amount, month, environment)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (category, month, environment) DO UPDATE SET amount = EXCLUDED.amount
+            ''', (budget.category, budget.amount, budget.month, budget.environment))
         else:
-            cursor.execute('''
-                INSERT OR REPLACE INTO budgets (category, amount, month)
-                VALUES (?, ?, ?)
-            ''', (budget.category, budget.amount, budget.month))
+            # For SQLite, check if exists first then update or insert
+            cursor.execute(sql_param('''
+                SELECT id FROM budgets WHERE category = ? AND month = ? AND environment = ?
+            '''), (budget.category, budget.month, budget.environment))
+            existing = cursor.fetchone()
+            
+            if existing:
+                cursor.execute(sql_param('''
+                    UPDATE budgets SET amount = ? WHERE id = ?
+                '''), (budget.amount, existing[0]))
+            else:
+                cursor.execute(sql_param('''
+                    INSERT INTO budgets (category, amount, month, environment)
+                    VALUES (?, ?, ?, ?)
+                '''), (budget.category, budget.amount, budget.month, budget.environment))
         conn.commit()
     except Exception as e:
         conn.close()
         raise HTTPException(status_code=400, detail=str(e))
     
     conn.close()
-    return {"status": "ok", "message": "Budget set successfully"}
+    return {"status": "ok", "message": "Presupuesto guardado correctamente"}
+
+@app.put("/budgets/{budget_id}")
+def update_budget(budget_id: int, budget: BudgetUpdate):
+    """Update an existing budget by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if exists
+    cursor.execute(sql_param("SELECT id FROM budgets WHERE id = ?"), (budget_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    
+    # Build dynamic update query
+    updates = []
+    params = []
+    
+    if budget.category is not None:
+        updates.append("category = ?")
+        params.append(budget.category)
+    if budget.amount is not None:
+        updates.append("amount = ?")
+        params.append(budget.amount)
+    if budget.month is not None:
+        updates.append("month = ?")
+        params.append(budget.month)
+    
+    if not updates:
+        conn.close()
+        return {"status": "ok", "message": "No hay cambios que aplicar"}
+    
+    params.append(budget_id)
+    query = f"UPDATE budgets SET {', '.join(updates)} WHERE id = ?"
+    cursor.execute(sql_param(query), params)
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok", "message": "Presupuesto actualizado"}
 
 @app.delete("/budgets/{budget_id}")
 def delete_budget(budget_id: int):
+    """Delete a budget by ID."""
     conn = get_db_connection()
     cursor = conn.cursor()
+    
+    # Check if exists
+    cursor.execute(sql_param("SELECT id FROM budgets WHERE id = ?"), (budget_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
+    
     cursor.execute(sql_param("DELETE FROM budgets WHERE id = ?"), (budget_id,))
     conn.commit()
     conn.close()
-    return {"status": "ok", "message": "Budget deleted"}
+    return {"status": "ok", "message": "Presupuesto eliminado"}
+
+
 
 
 # --- Forecasting ---
@@ -1379,7 +1533,7 @@ def get_subscriptions(environment: str = "TEST"):
                 COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) as distinct_months,
                 SUM(monto) as total_paid
             FROM transactions 
-            WHERE gasto > 0 AND environment = %s AND detalle IS NOT NULL AND detalle != ''
+            WHERE gasto > 0 AND environment = %s AND detalle IS NOT NULL AND detalle != '' AND categoria != 'Transferencia'
             GROUP BY detalle
             HAVING COUNT(DISTINCT TO_CHAR(TO_DATE(fecha, 'YYYY-MM-DD'), 'YYYY-MM')) >= 2
             ORDER BY total_paid DESC
@@ -1395,7 +1549,7 @@ def get_subscriptions(environment: str = "TEST"):
                 COUNT(DISTINCT strftime('%Y-%m', fecha)) as distinct_months,
                 SUM(monto) as total_paid
             FROM transactions 
-            WHERE gasto > 0 AND environment = ? AND detalle IS NOT NULL AND detalle != ''
+            WHERE gasto > 0 AND environment = ? AND detalle IS NOT NULL AND detalle != '' AND categoria != 'Transferencia'
             GROUP BY detalle
             HAVING COUNT(DISTINCT strftime('%Y-%m', fecha)) >= 2
             ORDER BY total_paid DESC

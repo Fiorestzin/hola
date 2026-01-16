@@ -17,7 +17,10 @@ export default function SubscriptionsModal({ isOpen, onClose, subscriptions }) {
                         <h2 className="text-xl font-bold text-white flex items-center gap-2">
                             <AlertCircle className="text-purple-400" /> Detector de Suscripciones
                         </h2>
-                        <p className="text-slate-400 text-sm">Gastos con el mismo detalle en 2+ meses diferentes</p>
+                        <p className="text-slate-400 text-sm mt-1">
+                            Detecta automáticamente gastos con el <strong>mismo nombre</strong> (Detalle) que se repiten en meses distintos.
+                            <span className="block text-xs text-slate-500 mt-0.5">(No depende de la categoría asignada)</span>
+                        </p>
                     </div>
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors p-2 hover:bg-slate-700 rounded-lg">
                         <X size={20} />

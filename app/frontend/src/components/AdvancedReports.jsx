@@ -752,14 +752,16 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                         <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${Math.round(val / 1000)}k`} />
                                                         <Tooltip
                                                             contentStyle={{
-                                                                backgroundColor: '#1e293b',
+                                                                backgroundColor: 'rgba(15, 23, 42, 0.95)', // Slate-900 casi opaco
                                                                 borderColor: '#475569',
-                                                                borderRadius: '8px',
-                                                                color: '#f8fafc'
+                                                                borderRadius: '12px',
+                                                                color: '#ffffff',
+                                                                boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                                                padding: '12px'
                                                             }}
-                                                            itemStyle={{ color: '#f8fafc' }}
-                                                            labelStyle={{ color: '#f8fafc', fontWeight: 'bold' }}
-                                                            cursor={false}
+                                                            itemStyle={{ color: '#e2e8f0', fontSize: '14px', padding: '2px 0' }}
+                                                            labelStyle={{ color: '#ffffff', fontWeight: 'bold', marginBottom: '8px', fontSize: '15px' }}
+                                                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
                                                             formatter={(val) => [fmt(val), null]}
                                                         />
                                                         <Legend />
@@ -777,14 +779,14 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                                     );
                                                                 }
                                                             }}
-                                                            style={{ cursor: 'pointer' }}
+                                                            style={{ cursor: 'pointer', outline: 'none' }}
                                                         >
                                                             {[
                                                                 { color: '#10b981' },
                                                                 { color: '#f43f5e' },
                                                                 { color: '#3b82f6' }
                                                             ].map((entry, index) => (
-                                                                <Cell key={`cell-actual-${index}`} fill={entry.color} />
+                                                                <Cell key={`cell-actual-${index}`} fill={entry.color} style={{ outline: 'none' }} />
                                                             ))}
                                                         </Bar>
                                                         <Bar
@@ -801,7 +803,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                                     );
                                                                 }
                                                             }}
-                                                            style={{ cursor: 'pointer' }}
+                                                            style={{ cursor: 'pointer', outline: 'none' }}
+                                                            fillOpacity={0.5}
                                                         >
                                                             {[
                                                                 { color: '#10b98155' },
