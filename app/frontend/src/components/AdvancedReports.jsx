@@ -15,10 +15,15 @@ const COLORS = ['#818cf8', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#a78bfa'
 const BARS_COLORS = ['#38bdf8', '#34d399', '#f472b6', '#fbbf24'];
 
 export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, environment = "TEST" }) {
+    // Default to show ALL data (since 2000)
     const [dateRange, setDateRange] = useState({
-        start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0], // First day of current month
+        start: '2000-01-01',
         end: new Date().toISOString().split('T')[0]
     });
+
+    // Category filter
+    const [categoryFilter, setCategoryFilter] = useState('');
+    const [availableCategories, setAvailableCategories] = useState([]);
 
     // Data States
     const [data, setData] = useState({ pie_data: [], bar_data: [] });
@@ -29,6 +34,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('summary'); // summary, trends, breakdown
     const [comparisonData, setComparisonData] = useState(null);
+    const [historyView, setHistoryView] = useState('monthly'); // 'monthly' or 'yearly' for Histórico chart
 
     // Drill Down State
     const [ddOpen, setDdOpen] = useState(false);
@@ -50,8 +56,20 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             fetchForecast();
             fetchSubscriptions();
             fetchComparison();
+            fetchCategories();
         }
-    }, [isOpen, dateRange, environment]);
+    }, [isOpen, dateRange, categoryFilter, environment]);
+
+    // Fetch available categories
+    const fetchCategories = async () => {
+        try {
+            const res = await fetch(`${API_URL}/categories?environment=${environment}`);
+            const cats = await res.json();
+            setAvailableCategories(cats.map(c => c.nombre));
+        } catch (error) {
+            console.error("Error fetching categories:", error);
+        }
+    };
 
     const fetchReports = async () => {
         setLoading(true);
@@ -61,6 +79,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 end_date: dateRange.end,
                 environment: environment
             });
+            if (categoryFilter) query.append('category', categoryFilter);
 
             const res = await fetch(`${API_URL}/reports?${query}`);
             const json = await res.json();
@@ -79,6 +98,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 end_date: dateRange.end,
                 environment: environment
             });
+            if (categoryFilter) query.append('category', categoryFilter);
             const res = await fetch(`${API_URL}/analysis?${query}`);
             const json = await res.json();
             setAnalysisData(json);
@@ -272,6 +292,10 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 environment: environment,
                 limit: 0
             });
+            // Add category filter if active
+            if (categoryFilter) {
+                params.append('category', categoryFilter);
+            }
             const res = await fetch(`${API_URL}/transactions?${params}`);
             const json = await res.json();
 
@@ -281,7 +305,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             );
 
             setDdTransactions(filtered);
-            setDdTitle(title);
+            setDdTitle(categoryFilter ? `${title} (${categoryFilter})` : title);
             setDdOpen(true);
         } catch (error) {
             console.error("Drilldown error:", error);
@@ -314,11 +338,77 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 
     const handleBankClick = (data) => {
         if (!data) return;
-        fetchDrillDown({ bank: data.name }, `Transacciones: ${data.name}`);
+        const filters = { bank: data.name };
+        if (categoryFilter) filters.category = categoryFilter;
+        const title = categoryFilter
+            ? `${data.name}: ${categoryFilter}`
+            : `Transacciones: ${data.name}`;
+        fetchDrillDown(filters, title);
+    };
+
+    // Handle history chart bar clicks
+    const handleHistoryBarClick = (data, tipo) => {
+        if (!data || !data.period) return;
+
+        const period = data.period;
+        let startDate, endDate, title;
+
+        if (historyView === 'yearly') {
+            // Period is just the year (e.g., "2024")
+            startDate = `${period}-01-01`;
+            endDate = `${period}-12-31`;
+            title = `${tipo} del año ${period}`;
+        } else {
+            // Period is YYYY-MM format
+            const [year, month] = period.split('-');
+            startDate = `${year}-${month}-01`;
+            const lastDay = new Date(year, parseInt(month), 0).getDate();
+            endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+            const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('es-CL', { month: 'long' });
+            title = `${tipo} de ${monthName} ${year}`;
+        }
+
+        // Fetch transactions filtered by type and date range
+        const tipoDb = tipo === 'Ingresos' ? 'Ingreso' : 'Gasto';
+        fetchDrillDownByType(startDate, endDate, tipoDb, title);
     };
 
 
     const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
+
+    // Process history data for monthly or yearly view
+    const processHistoryData = () => {
+        const barData = Array.isArray(data.bar_data) ? data.bar_data : [];
+        if (historyView === 'yearly') {
+            // Group by year
+            const yearlyData = {};
+            barData.forEach(item => {
+                const year = item.month?.substring(0, 4) || 'Sin año';
+                if (!yearlyData[year]) {
+                    yearlyData[year] = { period: year, ingreso: 0, gasto: 0 };
+                }
+                yearlyData[year].ingreso += item.ingreso || 0;
+                yearlyData[year].gasto += item.gasto || 0;
+            });
+            return Object.values(yearlyData).sort((a, b) => a.period.localeCompare(b.period));
+        } else {
+            // Monthly view - limit to last 12 months
+            return barData.slice(-12).map(item => ({
+                ...item,
+                period: item.month
+            }));
+        }
+    };
+
+    const formatHistoryPeriod = (period) => {
+        if (!period || period === 'Sin año') return period;
+        if (historyView === 'yearly') return period;
+        const [year, month] = period.split('-');
+        const date = new Date(year, month - 1);
+        return date.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
+    };
+
+    const historyChartData = processHistoryData();
 
     // --- KPI Calculations ---
     const barData = Array.isArray(data.bar_data) ? data.bar_data : [];
@@ -390,8 +480,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-slate-900 z-40 overflow-y-auto">
-            <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8">
+        <div className="fixed inset-0 bg-slate-950 text-slate-200 overflow-hidden flex flex-col font-sans selection:bg-cyan-500/30">
+            <div className="max-w-7xl mx-auto p-4 md:p-8 space-y-8 overflow-y-auto flex-1">
 
                 {/* Header & Controls */}
                 <header className="flex flex-col md:flex-row justify-between items-center bg-slate-800/50 p-6 rounded-2xl border border-slate-700 sticky top-4 backdrop-blur-md z-50 shadow-xl gap-4">
@@ -423,22 +513,50 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             </button>
                         </div>
 
-                        {/* Date Picker */}
-                        <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-700">
-                            <Calendar size={16} className="text-slate-400" />
-                            <input
-                                type="date"
-                                value={dateRange.start}
-                                onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-                                className="bg-transparent text-white text-sm focus:outline-none w-24"
-                            />
-                            <span className="text-slate-600">-</span>
-                            <input
-                                type="date"
-                                value={dateRange.end}
-                                onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-                                className="bg-transparent text-white text-sm focus:outline-none w-24"
-                            />
+                        {/* Filters Row */}
+                        <div className="flex flex-wrap items-center gap-2">
+                            {/* Date Picker */}
+                            <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-700">
+                                <Calendar size={16} className="text-slate-400" />
+                                <input
+                                    type="date"
+                                    value={dateRange.start}
+                                    onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+                                    className="bg-transparent text-white text-sm focus:outline-none w-28"
+                                />
+                                <span className="text-slate-600">-</span>
+                                <input
+                                    type="date"
+                                    value={dateRange.end}
+                                    onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+                                    className="bg-transparent text-white text-sm focus:outline-none w-28"
+                                />
+                            </div>
+
+                            {/* Category Filter */}
+                            <select
+                                value={categoryFilter}
+                                onChange={(e) => setCategoryFilter(e.target.value)}
+                                className="bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 min-w-[140px]"
+                            >
+                                <option value="">Todas las categorías</option>
+                                {availableCategories.map(cat => (
+                                    <option key={cat} value={cat}>{cat}</option>
+                                ))}
+                            </select>
+
+                            {/* Clear Filters Button */}
+                            <button
+                                onClick={() => {
+                                    setDateRange({ start: '2000-01-01', end: new Date().toISOString().split('T')[0] });
+                                    setCategoryFilter('');
+                                }}
+                                className="bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                                title="Limpiar todos los filtros"
+                            >
+                                <X size={14} />
+                                Limpiar
+                            </button>
                         </div>
 
                         {/* Tabs Navigation */}
@@ -454,12 +572,6 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'trends' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
                             >
                                 <TrendingUp size={16} /> <span className="hidden sm:inline">Tendencia</span>
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('breakdown')}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'breakdown' ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg' : 'text-slate-400 hover:text-white hover:bg-slate-700/50'}`}
-                            >
-                                <List size={16} /> <span className="hidden sm:inline">Desglose</span>
                             </button>
                         </div>
 
@@ -480,60 +592,46 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         {/* --- TAB: SUMMARY --- */}
                         {activeTab === 'summary' && (
                             <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-                                {/* KPI Cards */}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                    <KpiCard
-                                        title="Libertad Financiera"
-                                        value={runway}
-                                        sub="Tiempo que durarían tus ahorros"
-                                        icon={<Hourglass size={20} />}
-                                        color="indigo"
-                                    />
-                                    <KpiCard
-                                        title="Tasa de Ahorro"
-                                        value={`${savingsRate.toFixed(1)}%`}
-                                        sub="% Ingresos retenidos"
-                                        icon={<PiggyBank size={20} />}
-                                        color={savingsRate >= 20 ? 'emerald' : 'yellow'}
-                                    />
-                                    <KpiCard
-                                        title="Burn Rate Diario"
-                                        value={fmt(burnRate)}
-                                        sub="Gasto promedio por día"
-                                        icon={<Flame size={20} />}
-                                        color="rose"
-                                    />
-                                </div>
-
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                    <ChartCard title="Distribución de Gastos" icon={<PieIcon className="text-pink-400" size={20} />}>
+                                    <ChartCard title="Distribución de Gastos" icon={<BarChart3 className="text-pink-400" size={20} />}>
                                         {pieData.length > 0 ? (
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <PieChart>
-                                                    <Pie
-                                                        data={pieData}
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        innerRadius={60}
-                                                        outerRadius={100}
-                                                        paddingAngle={5}
-                                                        dataKey="value"
-                                                        onClick={handlePieClick}
-                                                        className="cursor-pointer focus:outline-none"
-                                                    >
-                                                        {pieData.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
-                                                        ))}
-                                                    </Pie>
+                                                <BarChart
+                                                    data={[...pieData].sort((a, b) => b.value - a.value)}
+                                                    layout="vertical"
+                                                    margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+                                                >
+                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
+                                                    <XAxis
+                                                        type="number"
+                                                        stroke="#94a3b8"
+                                                        tick={{ fontSize: 11 }}
+                                                        tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
+                                                    />
+                                                    <YAxis
+                                                        type="category"
+                                                        dataKey="name"
+                                                        stroke="#94a3b8"
+                                                        tick={{ fontSize: 11 }}
+                                                        width={75}
+                                                    />
                                                     <Tooltip
                                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
-                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                                                        itemStyle={{ color: '#f8fafc' }}
                                                         formatter={(val) => fmt(val)}
-                                                        cursor={{ fill: 'transparent' }}
+                                                        cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
                                                     />
-                                                    <Legend />
-                                                </PieChart>
+                                                    <Bar
+                                                        dataKey="value"
+                                                        name="Monto"
+                                                        radius={[0, 4, 4, 0]}
+                                                        onClick={handlePieClick}
+                                                        className="cursor-pointer"
+                                                    >
+                                                        {[...pieData].sort((a, b) => b.value - a.value).map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="hover:opacity-80 transition-opacity" />
+                                                        ))}
+                                                    </Bar>
+                                                </BarChart>
                                             </ResponsiveContainer>
                                         ) : (
                                             <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
@@ -542,47 +640,120 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                         )}
                                     </ChartCard>
 
-                                    <ChartCard title="Histórico Mensual" icon={<BarChart3 className="text-purple-400" size={20} />}>
-                                        {barData.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart data={barData} onClick={handleBarClick} className="cursor-pointer">
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
-                                                    <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatMonth} />
-                                                    <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${val / 1000}k`} tick={{ fontSize: 12 }} />
-                                                    <Tooltip
-                                                        contentStyle={{
-                                                            backgroundColor: '#0f172a',
-                                                            borderColor: '#334155',
-                                                            borderRadius: '12px',
-                                                            boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
-                                                        }}
-                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                                                        itemStyle={{ color: '#f8fafc' }}
-                                                        formatter={(val) => fmt(val)}
-                                                        cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
-                                                    />
-                                                    <Legend />
-                                                    <Bar
-                                                        dataKey="ingreso"
-                                                        name="Ingresos"
-                                                        fill="#34d399"
-                                                        radius={[4, 4, 0, 0]}
-                                                        onClick={(data) => handleIngresoBarClick(data, data?.month)}
-                                                        className="cursor-pointer hover:opacity-80"
-                                                    />
-                                                    <Bar
-                                                        dataKey="gasto"
-                                                        name="Gastos"
-                                                        fill="#f87171"
-                                                        radius={[4, 4, 0, 0]}
-                                                        onClick={(data) => handleGastoBarClick(data, data?.month)}
-                                                        className="cursor-pointer hover:opacity-80"
-                                                    />
-                                                </BarChart>
-                                            </ResponsiveContainer>
+                                    {/* Histórico with Toggle */}
+                                    <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl h-[320px] relative">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-lg font-bold text-slate-200 flex items-center gap-2">
+                                                <BarChart3 className="text-purple-400" size={20} />
+                                                {historyView === 'yearly' ? 'Histórico Anual' : 'Histórico Mensual (Últimos 12)'}
+                                            </h3>
+                                            <div className="flex gap-1 bg-slate-900 rounded-lg p-1">
+                                                <button
+                                                    onClick={() => setHistoryView('monthly')}
+                                                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${historyView === 'monthly'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'text-slate-400 hover:text-white'
+                                                        }`}
+                                                >
+                                                    Mensual
+                                                </button>
+                                                <button
+                                                    onClick={() => setHistoryView('yearly')}
+                                                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${historyView === 'yearly'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'text-slate-400 hover:text-white'
+                                                        }`}
+                                                >
+                                                    Anual
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="h-[240px]">
+                                            {historyChartData.length > 0 ? (
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={historyChartData} className="cursor-pointer">
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} vertical={false} />
+                                                        <XAxis dataKey="period" stroke="#94a3b8" tick={{ fontSize: 12 }} tickFormatter={formatHistoryPeriod} />
+                                                        <YAxis stroke="#94a3b8" tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`} tick={{ fontSize: 12 }} />
+                                                        <Tooltip
+                                                            contentStyle={{
+                                                                backgroundColor: '#0f172a',
+                                                                borderColor: '#334155',
+                                                                borderRadius: '12px',
+                                                                boxShadow: '0 10px 40px rgba(0,0,0,0.5)'
+                                                            }}
+                                                            labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                            labelFormatter={formatHistoryPeriod}
+                                                            itemStyle={{ color: '#f8fafc' }}
+                                                            formatter={(val) => fmt(val)}
+                                                            cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
+                                                        />
+                                                        <Legend />
+                                                        <Bar
+                                                            dataKey="ingreso"
+                                                            name="Ingresos"
+                                                            fill="#34d399"
+                                                            radius={[4, 4, 0, 0]}
+                                                            className="cursor-pointer hover:opacity-80"
+                                                            onClick={(data) => handleHistoryBarClick(data, 'Ingresos')}
+                                                            style={{ cursor: 'pointer' }}
+                                                        />
+                                                        <Bar
+                                                            dataKey="gasto"
+                                                            name="Gastos"
+                                                            fill="#f87171"
+                                                            radius={[4, 4, 0, 0]}
+                                                            className="cursor-pointer hover:opacity-80"
+                                                            onClick={(data) => handleHistoryBarClick(data, 'Gastos')}
+                                                            style={{ cursor: 'pointer' }}
+                                                        />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            ) : (
+                                                <div className="h-full flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                    No hay datos históricos
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Payment Methods Chart */}
+                                <div className="mt-8">
+                                    <ChartCard title="Medios de Pago" icon={<CreditCard className="text-blue-400" size={20} />}>
+                                        {paymentMethods.length > 0 ? (
+                                            <div className="h-[350px]">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={paymentMethods}
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            innerRadius={80}
+                                                            outerRadius={120}
+                                                            paddingAngle={5}
+                                                            dataKey="value"
+                                                            onClick={handleBankClick}
+                                                            className="cursor-pointer"
+                                                        >
+                                                            {paymentMethods.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip
+                                                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                            labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
+                                                            itemStyle={{ color: '#f8fafc' }}
+                                                            formatter={(val) => fmt(val)}
+                                                            cursor={{ fill: 'transparent' }}
+                                                        />
+                                                        <Legend />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
                                         ) : (
-                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                                                No hay datos históricos
+                                            <div className="h-[300px] flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
+                                                No hay datos de medios de pago
                                             </div>
                                         )}
                                     </ChartCard>
@@ -841,109 +1012,22 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             </div>
                         )}
 
-                        {/* --- TAB: BREAKDOWN --- */}
-                        {activeTab === 'breakdown' && (
-                            <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
-                                    {/* Top 10 Categories */}
-                                    <ChartCard title="Top 10 Categorías" icon={<List className="text-yellow-400" size={20} />}>
-                                        {topExpenses.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart
-                                                    layout="vertical"
-                                                    data={topExpenses}
-                                                    className="cursor-pointer"
-                                                    margin={{ left: 20 }} // Space for strict labels
-                                                >
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} horizontal={false} />
-                                                    <XAxis type="number" stroke="#94a3b8" hide />
-                                                    <YAxis
-                                                        dataKey="name"
-                                                        type="category"
-                                                        stroke="#cbd5e1"
-                                                        width={100}
-                                                        tick={{ fontSize: 11 }}
-                                                    />
-                                                    <Tooltip
-                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
-                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                                                        itemStyle={{ color: '#f8fafc' }}
-                                                        formatter={(val) => fmt(val)}
-                                                        cursor={{ fill: 'transparent' }}
-                                                    />
-                                                    <Bar dataKey="value" fill="#fbbf24" radius={[0, 4, 4, 0]} onClick={handleTopItemClick}>
-                                                        {topExpenses.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={BARS_COLORS[index % BARS_COLORS.length]} />
-                                                        ))}
-                                                    </Bar>
-                                                </BarChart>
-                                            </ResponsiveContainer>
-                                        ) : (
-                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                                                No hay gastos individuales significativos
-                                            </div>
-                                        )}
-                                    </ChartCard>
+                        <DrillDownModal
+                            isOpen={ddOpen}
+                            onClose={() => setDdOpen(false)}
+                            title={ddTitle}
+                            transactions={ddTransactions}
+                            evolutionData={ddEvolution}
+                        />
 
-                                    {/* Payment Methods */}
-                                    <ChartCard title="Medios de Pago" icon={<CreditCard className="text-blue-400" size={20} />}>
-                                        {paymentMethods.length > 0 ? (
-                                            <ResponsiveContainer width="100%" height="100%">
-                                                <PieChart>
-                                                    <Pie
-                                                        data={paymentMethods}
-                                                        cx="50%"
-                                                        cy="50%"
-                                                        innerRadius={60}
-                                                        outerRadius={100}
-                                                        paddingAngle={5}
-                                                        dataKey="value"
-                                                        onClick={handleBankClick}
-                                                        className="cursor-pointer"
-                                                    >
-                                                        {paymentMethods.map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0.2)" className="hover:opacity-80 transition-opacity" />
-                                                        ))}
-                                                    </Pie>
-                                                    <Tooltip
-                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
-                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                                                        itemStyle={{ color: '#f8fafc' }}
-                                                        formatter={(val) => fmt(val)}
-                                                        cursor={{ fill: 'transparent' }}
-                                                    />
-                                                    <Legend />
-                                                </PieChart>
-                                            </ResponsiveContainer>
-                                        ) : (
-                                            <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
-                                                No hay datos de medios de pago
-                                            </div>
-                                        )}
-                                    </ChartCard>
-                                </div>
-                            </div>
-                        )}
-
-
-
+                        <SubscriptionsModal
+                            isOpen={subModalOpen}
+                            onClose={() => setSubModalOpen(false)}
+                            subscriptions={subsData}
+                        />
                     </div>
                 )}
-
-                <DrillDownModal
-                    isOpen={ddOpen}
-                    onClose={() => setDdOpen(false)}
-                    title={ddTitle}
-                    transactions={ddTransactions}
-                    evolutionData={ddEvolution}
-                />
-
-                <SubscriptionsModal
-                    isOpen={subModalOpen}
-                    onClose={() => setSubModalOpen(false)}
-                    subscriptions={subsData}
-                />
             </div>
         </div>
     );

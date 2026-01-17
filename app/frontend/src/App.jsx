@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target, Pencil } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
 import BanksManager from './components/BanksManager';
@@ -9,7 +9,8 @@ import AdvancedReports from './components/AdvancedReports';
 import SettingsPanel from './components/SettingsPanel';
 import TransferModal from './components/TransferModal';
 import SavingsGoalsModal from './components/SavingsGoalsModal';
-import { EnvironmentControls } from "./components/EnvironmentControls";
+import EditTransactionModal from './components/EditTransactionModal';
+import BankDetailsModal from './components/BankDetailsModal';
 import Login from "./components/Login";
 import { API_URL } from "./config";
 
@@ -49,6 +50,14 @@ function App() {
   // Budget State
   const [isBudgetOpen, setIsBudgetOpen] = useState(false);
 
+  // Edit Transaction State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
+
+  // Bank Details State
+  const [isBankDetailsOpen, setIsBankDetailsOpen] = useState(false);
+  const [selectedBank, setSelectedBank] = useState(null);
+
   // Check if already logged in on startup
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
@@ -83,89 +92,40 @@ function App() {
     setIsAuthenticated(false);
   };
 
-  const handleDeleteTransaction = async (txId) => {
-    const password = prompt('Ingresa tu contraseña para eliminar:');
-    if (!password) return;
-
-    // Get the current delete phrase from the database
-    try {
-      const phraseRes = await fetch(`${API_URL}/settings/delete-phrase`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (phraseRes.ok) {
-        const data = await phraseRes.json();
-        if (password !== data.phrase) {
-          alert('Contraseña incorrecta');
-          return;
-        }
-      } else {
-        alert('Error al verificar contraseña');
-        return;
-      }
-    } catch (e) {
-      console.error('Error fetching delete phrase:', e);
-      alert('Error al verificar contraseña');
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API_URL}/transaction/${txId}`, { method: 'DELETE' });
-      if (res.ok) {
-        // Refresh all data to update totals
-        fetchData();
-      } else {
-        alert('Error al eliminar');
-      }
-    } catch (e) {
-      console.error('Delete failed:', e);
-      alert('Error al eliminar');
-    }
+  // Open edit modal for a transaction
+  const handleEditTransaction = (tx) => {
+    setSelectedTransaction(tx);
+    setIsEditModalOpen(true);
   };
 
-  // Current environment state
-  const [currentEnv, setCurrentEnv] = useState("TEST");
-
-  // Fetch current environment from config
-  const fetchEnv = async () => {
+  // Fetch data function
+  const fetchData = async () => {
     try {
-      const res = await fetch(`${API_URL}/config`);
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentEnv(data.env || "TEST");
-      }
-    } catch (e) {
-      console.error("Error fetching env config:", e);
-    }
-  };
-
-  // Fetch data function (defined before hooks)
-  const fetchData = async (env = currentEnv) => {
-    try {
-      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=${env}`);
+      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=TEST`);
       const txData = await txRes.json();
       setTransactions(txData);
 
-      const bankRes = await fetch(`${API_URL}/summary/banks?environment=${env}`);
+      const bankRes = await fetch(`${API_URL}/summary/banks?environment=TEST`);
       const bankData = await bankRes.json();
       setBanks(bankData);
 
       // Fetch savings summary for committed balance display
       try {
-        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=${env}`);
+        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=TEST`);
         if (savingsRes.ok) {
           const savingsData = await savingsRes.json();
           setSavingsSummary(savingsData);
         }
 
         // Fetch per-bank savings
-        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=${env}`);
+        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=TEST`);
         if (byBankRes.ok) {
           const byBankData = await byBankRes.json();
           setSavingsByBank(byBankData);
         }
 
         // Fetch pending withdrawals by bank
-        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=${env}`);
+        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=TEST`);
         if (pendingRes.ok) {
           const pendingData = await pendingRes.json();
           // Group by bank
@@ -190,25 +150,8 @@ function App() {
 
   // useEffect for fetching data - MUST be before any early returns!
   useEffect(() => {
-    const initData = async () => {
-      // First get current environment
-      let env = "TEST";
-      try {
-        const res = await fetch(`${API_URL}/config`);
-        if (res.ok) {
-          const data = await res.json();
-          env = data.env || "TEST";
-          setCurrentEnv(env);
-        }
-      } catch (e) {
-        console.error("Error fetching env:", e);
-      }
-      // Then fetch data with that environment
-      await fetchData(env);
-    };
-
     if (isAuthenticated) {
-      initData();
+      fetchData();
     }
   }, [isAuthenticated]);
 
@@ -234,7 +177,7 @@ function App() {
   const handleSaveTransaction = async (data) => {
     try {
       // Inject current environment into the transaction data
-      const payload = { ...data, environment: currentEnv };
+      const payload = { ...data, environment: "TEST" };
 
       const res = await fetch(`${API_URL}/transaction`, {
         method: 'POST',
@@ -268,8 +211,8 @@ function App() {
   const saldoDisponible = totalSaldo - totalAhorrado;
 
   // Prepare chart data (Last 20 transactions simplified)
-  const chartData = [...transactions].reverse().map(t => ({
-    name: t.detalle.substring(0, 10),
+  const chartData = [...transactions].slice(0, 20).reverse().map(t => ({
+    name: t.detalle?.substring(0, 10) || '',
     monto: t.tipo === 'Ingreso' ? t.ingreso : -t.gasto
   }));
 
@@ -302,7 +245,6 @@ function App() {
             </div>
 
             <div className="flex gap-2 items-center">
-              <EnvironmentControls />
               <button
                 onClick={() => setIsReportsOpen(true)}
                 className="bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors text-slate-300 hover:text-white"
@@ -357,7 +299,14 @@ function App() {
               const disponible = bank.saldo - aportadoDesdeBanco;
 
               return (
-                <div key={idx} className="bg-slate-800/80 p-5 rounded-xl border border-slate-700 hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/1 group">
+                <div
+                  key={idx}
+                  className="bg-slate-800/80 p-5 rounded-xl border border-slate-700 hover:border-blue-500/50 transition-all hover:shadow-lg hover:shadow-blue-500/10 group cursor-pointer"
+                  onClick={() => {
+                    setSelectedBank(bankName);
+                    setIsBankDetailsOpen(true);
+                  }}
+                >
                   <div className="flex justify-between items-start mb-2">
                     <h3 className="font-bold text-lg text-slate-200 group-hover:text-blue-300 transition-colors">{bankName}</h3>
                     <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full ${bank.saldo >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
@@ -438,7 +387,7 @@ function App() {
                     <th className="pb-3">Detalle</th>
                     <th className="pb-3 hidden md:table-cell">Categoría</th>
                     <th className="pb-3 text-right">Monto</th>
-                    <th className="pb-3 text-center pr-2">🗑️</th>
+                    <th className="pb-3 text-center pr-2">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="text-sm">
@@ -457,11 +406,11 @@ function App() {
                       </td>
                       <td className="py-3 text-center pr-2">
                         <button
-                          onClick={() => handleDeleteTransaction(tx.id)}
-                          className="text-slate-500 hover:text-rose-400 transition-colors opacity-0 group-hover:opacity-100"
-                          title="Eliminar"
+                          onClick={() => handleEditTransaction(tx)}
+                          className="text-slate-400 hover:text-blue-400 transition-colors p-1 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100"
+                          title="Editar"
                         >
-                          <Trash2 size={14} />
+                          <Pencil size={14} />
                         </button>
                       </td>
                     </tr>
@@ -552,14 +501,14 @@ function App() {
         }
         onSave={handleSaveTransaction}
         type={modalType}
-        environment={currentEnv}
+        environment="TEST"
       />
 
       {/* Categories Manager */}
       < CategoriesManager
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
-        environment={currentEnv}
+        environment="TEST"
         onCategoryChange={() => fetchData()}
       />
 
@@ -567,7 +516,7 @@ function App() {
       <BanksManager
         isOpen={isBanksOpen}
         onClose={() => setIsBanksOpen(false)}
-        environment={currentEnv}
+        environment="TEST"
       />
 
       {/* Advanced Reports */}
@@ -575,7 +524,7 @@ function App() {
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
         totalNetWorth={saldoDisponible}
-        environment={currentEnv}
+        environment="TEST"
       />
 
       {/* Settings Panel */}
@@ -589,7 +538,7 @@ function App() {
       <TransferModal
         isOpen={isTransferOpen}
         onClose={() => setIsTransferOpen(false)}
-        environment={currentEnv}
+        environment="TEST"
         onTransferComplete={() => fetchData()}
       />
 
@@ -597,7 +546,7 @@ function App() {
       <SavingsGoalsModal
         isOpen={isSavingsOpen}
         onClose={() => setIsSavingsOpen(false)}
-        environment={currentEnv}
+        environment="TEST"
         onGoalChange={() => fetchData()}
       />
 
@@ -605,7 +554,32 @@ function App() {
       <BudgetManager
         isOpen={isBudgetOpen}
         onClose={() => setIsBudgetOpen(false)}
-        environment={currentEnv}
+        environment="TEST"
+      />
+
+      {/* Edit Transaction Modal */}
+      <EditTransactionModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setSelectedTransaction(null);
+        }}
+        transaction={selectedTransaction}
+        environment="TEST"
+        onUpdate={() => fetchData()}
+        onDelete={() => fetchData()}
+        token={token}
+      />
+
+      {/* Bank Details Modal */}
+      <BankDetailsModal
+        isOpen={isBankDetailsOpen}
+        onClose={() => {
+          setIsBankDetailsOpen(false);
+          setSelectedBank(null);
+        }}
+        bankName={selectedBank}
+        environment="TEST"
       />
     </div >
   );

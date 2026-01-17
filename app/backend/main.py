@@ -422,7 +422,7 @@ def get_bank_balances(environment: str = "TEST"):
 
 
 @app.get("/reports")
-def get_reports(start_date: str = None, end_date: str = None, environment: str = "TEST"):
+def get_reports(start_date: str = None, end_date: str = None, category: str = None, environment: str = "TEST"):
     conn = get_db_connection()
     
     # Base filter with environment
@@ -434,6 +434,9 @@ def get_reports(start_date: str = None, end_date: str = None, environment: str =
     if end_date:
         where_clause += " AND fecha <= ?"
         params.append(end_date)
+    if category:
+        where_clause += " AND categoria = ?"
+        params.append(category)
 
 
     # 1. Category Breakdown (Pie Chart) - ONLY Expenses, exclude transfers
@@ -546,7 +549,7 @@ def get_period_comparison(start_date: str, end_date: str, environment: str = "TE
     }
 
 @app.get("/analysis")
-def get_analysis(start_date: str = None, end_date: str = None, environment: str = "TEST"):
+def get_analysis(start_date: str = None, end_date: str = None, category: str = None, environment: str = "TEST"):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -558,6 +561,9 @@ def get_analysis(start_date: str = None, end_date: str = None, environment: str 
     if end_date:
         where_clause += " AND fecha <= ?"
         params.append(end_date)
+    if category:
+        where_clause += " AND categoria = ?"
+        params.append(category)
         
     # 1. Top 10 Categorías de Gasto (exclude transfers)
     top_items_query = f'''
