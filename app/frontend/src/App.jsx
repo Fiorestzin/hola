@@ -101,31 +101,31 @@ function App() {
   // Fetch data function
   const fetchData = async () => {
     try {
-      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=TEST`);
+      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=PROD`);
       const txData = await txRes.json();
       setTransactions(txData);
 
-      const bankRes = await fetch(`${API_URL}/summary/banks?environment=TEST`);
+      const bankRes = await fetch(`${API_URL}/summary/banks?environment=PROD`);
       const bankData = await bankRes.json();
       setBanks(bankData);
 
       // Fetch savings summary for committed balance display
       try {
-        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=TEST`);
+        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=PROD`);
         if (savingsRes.ok) {
           const savingsData = await savingsRes.json();
           setSavingsSummary(savingsData);
         }
 
         // Fetch per-bank savings
-        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=TEST`);
+        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=PROD`);
         if (byBankRes.ok) {
           const byBankData = await byBankRes.json();
           setSavingsByBank(byBankData);
         }
 
         // Fetch pending withdrawals by bank
-        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=TEST`);
+        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=PROD`);
         if (pendingRes.ok) {
           const pendingData = await pendingRes.json();
           // Group by bank
@@ -177,7 +177,7 @@ function App() {
   const handleSaveTransaction = async (data) => {
     try {
       // Inject current environment into the transaction data
-      const payload = { ...data, environment: "TEST" };
+      const payload = { ...data, environment: "PROD" };
 
       const res = await fetch(`${API_URL}/transaction`, {
         method: 'POST',
@@ -501,14 +501,14 @@ function App() {
         }
         onSave={handleSaveTransaction}
         type={modalType}
-        environment="TEST"
+        environment="PROD"
       />
 
       {/* Categories Manager */}
       < CategoriesManager
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
-        environment="TEST"
+        environment="PROD"
         onCategoryChange={() => fetchData()}
       />
 
@@ -516,7 +516,7 @@ function App() {
       <BanksManager
         isOpen={isBanksOpen}
         onClose={() => setIsBanksOpen(false)}
-        environment="TEST"
+        environment="PROD"
       />
 
       {/* Advanced Reports */}
@@ -524,7 +524,7 @@ function App() {
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
         totalNetWorth={saldoDisponible}
-        environment="TEST"
+        environment="PROD"
       />
 
       {/* Settings Panel */}
@@ -538,7 +538,7 @@ function App() {
       <TransferModal
         isOpen={isTransferOpen}
         onClose={() => setIsTransferOpen(false)}
-        environment="TEST"
+        environment="PROD"
         onTransferComplete={() => fetchData()}
       />
 
@@ -546,7 +546,7 @@ function App() {
       <SavingsGoalsModal
         isOpen={isSavingsOpen}
         onClose={() => setIsSavingsOpen(false)}
-        environment="TEST"
+        environment="PROD"
         onGoalChange={() => fetchData()}
       />
 
@@ -554,7 +554,7 @@ function App() {
       <BudgetManager
         isOpen={isBudgetOpen}
         onClose={() => setIsBudgetOpen(false)}
-        environment="TEST"
+        environment="PROD"
       />
 
       {/* Edit Transaction Modal */}
@@ -565,7 +565,7 @@ function App() {
           setSelectedTransaction(null);
         }}
         transaction={selectedTransaction}
-        environment="TEST"
+        environment="PROD"
         onUpdate={() => fetchData()}
         onDelete={() => fetchData()}
         token={token}
@@ -579,7 +579,7 @@ function App() {
           setSelectedBank(null);
         }}
         bankName={selectedBank}
-        environment="TEST"
+        environment="PROD"
       />
     </div >
   );
