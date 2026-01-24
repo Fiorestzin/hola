@@ -8,7 +8,6 @@ import {
     PiggyBank, Flame, TrendingUp, List, CreditCard, AlertCircle, Download
 } from 'lucide-react';
 import DrillDownModal from './DrillDownModal';
-import SubscriptionsModal from './SubscriptionsModal';
 import { API_URL } from "../config";
 
 const COLORS = ['#818cf8', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#a78bfa', '#f87171'];
@@ -29,8 +28,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const [data, setData] = useState({ pie_data: [], bar_data: [] });
     const [analysisData, setAnalysisData] = useState({ top_expenses: [], payment_methods: [] });
     const [forecastData, setForecastData] = useState([]);
-    const [subsData, setSubsData] = useState([]);
-    const [subModalOpen, setSubModalOpen] = useState(false);
+
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('summary'); // summary, trends, breakdown
     const [comparisonData, setComparisonData] = useState(null);
@@ -54,7 +52,6 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             fetchReports();
             fetchAnalysis();
             fetchForecast();
-            fetchSubscriptions();
             fetchComparison();
             fetchCategories();
         }
@@ -117,15 +114,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         }
     };
 
-    const fetchSubscriptions = async () => {
-        try {
-            const res = await fetch(`${API_URL}/subscriptions?environment=${environment}`);
-            const json = await res.json();
-            setSubsData(json);
-        } catch (error) {
-            console.error("Error fetching subscriptions:", error);
-        }
-    };
+
 
     const fetchComparison = async () => {
         try {
@@ -496,14 +485,6 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         {/* Action Buttons */}
                         <div className="flex items-center gap-2">
                             <button
-                                onClick={() => setSubModalOpen(true)}
-                                className="bg-gradient-to-r from-purple-600/30 to-indigo-600/30 hover:from-purple-600/40 hover:to-indigo-600/40 text-purple-200 px-4 py-2 rounded-lg border border-purple-500/50 transition-all text-sm flex items-center gap-2 shadow-lg"
-                                title="Detecta patrones de gastos recurrentes (3+ meses)"
-                            >
-                                <AlertCircle size={16} />
-                                <span>{subsData.length > 0 ? `${subsData.length} Detectados` : 'Detector'}</span>
-                            </button>
-                            <button
                                 onClick={handleExport}
                                 className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 px-3 py-2 rounded-lg border border-emerald-500/50 transition-all text-sm flex items-center gap-2"
                                 title="Exportar a Excel"
@@ -617,6 +598,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                                     />
                                                     <Tooltip
                                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
                                                         formatter={(val) => fmt(val)}
                                                         cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
                                                     />
@@ -1021,11 +1004,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             evolutionData={ddEvolution}
                         />
 
-                        <SubscriptionsModal
-                            isOpen={subModalOpen}
-                            onClose={() => setSubModalOpen(false)}
-                            subscriptions={subsData}
-                        />
+
                     </div>
                 )}
             </div>

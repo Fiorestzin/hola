@@ -46,16 +46,10 @@ USE_POSTGRES = DATABASE_URL is not None and HAS_POSTGRES
 
 # SQLite fallback config
 class GlobalConfig:
-    ENV = os.getenv("FINANCE_ENV", "TEST").upper()
-    DB_FILENAME = "finance_prod.db" if ENV == "PROD" else "finance_test.db"
+    ENV = "PROD"
+    DB_FILENAME = "finance_prod.db"
 
 config = GlobalConfig()
-
-def update_db_path():
-    config.DB_FILENAME = "finance_prod.db" if config.ENV == "PROD" else "finance_test.db"
-    print(f"SWITCHED TO: {config.ENV} ({config.DB_FILENAME})")
-
-DB_PATH = os.path.join(os.path.dirname(__file__), config.DB_FILENAME)
 
 def get_db_path():
     return os.path.join(os.path.dirname(__file__), config.DB_FILENAME)
@@ -121,23 +115,9 @@ class ResetRequest(BaseModel):
 
 @app.get("/config")
 def get_config():
-    return {"env": config.ENV, "db": config.DB_FILENAME}
+    return {"env": "PROD", "db": config.DB_FILENAME}
 
-@app.post("/config/switch")
-def switch_env(update: ConfigUpdate):
-    if update.env not in ["TEST", "PROD"]:
-        raise HTTPException(status_code=400, detail="Invalid environment. Use TEST or PROD.")
-    
-    config.ENV = update.env
-    update_db_path()
-    
-    # Ensure DB exists/init if switching to new one
-    try:
-        init_db()
-    except:
-        pass # Might fail if table already exists, init_db is safe
-        
-    return {"status": "ok", "env": config.ENV, "db": config.DB_FILENAME}
+# Removed switch_env endpoint as we are enforcing PROD
 
 @app.post("/config/reset")
 def reset_db_data(req: ResetRequest):
@@ -321,7 +301,7 @@ async def get_delete_phrase(current_user = Depends(get_current_user)):
     return {"phrase": row[0] if row else "fiorestzin"}
 
 # Global environment state (shared across requests)
-current_environment = "TEST"  # Default to demo mode
+current_environment = "PROD"  # Default to demo mode
 
 @app.get("/")
 def read_root():
