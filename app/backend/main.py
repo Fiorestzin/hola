@@ -1211,7 +1211,7 @@ init_db()
 class Category(BaseModel):
     nombre: str
     tipo: str = 'Gasto'
-    environment: str = 'TEST'  # TEST (demo) or PROD (real)
+    environment: str = 'PROD'  # TEST (demo) or PROD (real)
 
 @app.get("/categories")
 def get_categories(environment: str = None):
@@ -1306,7 +1306,7 @@ def update_category(cat_id: int, cat: CategoryUpdate):
 
 class Bank(BaseModel):
     nombre: str
-    environment: str = 'TEST'  # TEST (demo) or PROD (real)
+    environment: str = 'PROD'  # TEST (demo) or PROD (real)
 
 @app.get("/banks")
 def get_banks(environment: str = None):
@@ -1360,7 +1360,7 @@ class Budget(BaseModel):
     category: str
     amount: float
     month: str  # YYYY-MM
-    environment: str = "TEST"
+    environment: str = "PROD"
 
 class BudgetUpdate(BaseModel):
     category: str = None
@@ -1368,7 +1368,7 @@ class BudgetUpdate(BaseModel):
     month: str = None
 
 @app.get("/budgets")
-def get_budgets(month: str = None, environment: str = "TEST"):
+def get_budgets(month: str = None, environment: str = "PROD"):
     """Get all budgets for the given environment, optionally filtered by month."""
     conn = get_db_connection()
     cursor = conn.cursor()
