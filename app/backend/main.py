@@ -62,6 +62,7 @@ else:
     print(f"DATABASE: SQLite ({config.DB_FILENAME})")
 print("")
 
+
 def get_db_connection():
     if USE_POSTGRES:
         conn = psycopg2.connect(DATABASE_URL)
@@ -107,6 +108,84 @@ def fetchone_as_dict(cursor):
         return dict(row) if row else None
 
     
+
+def init_budgets_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Categories Table
+    if USE_POSTGRES:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                tipo TEXT NOT NULL, -- 'Ingreso', 'Gasto'
+                environment TEXT DEFAULT 'TEST',
+                UNIQUE(nombre, environment)
+            );
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS budgets (
+                id SERIAL PRIMARY KEY,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                month TEXT NOT NULL, -- YYYY-MM
+                environment TEXT DEFAULT 'TEST',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                environment TEXT DEFAULT 'TEST',
+                UNIQUE(nombre, environment)
+            );
+        """)
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                month TEXT NOT NULL,
+                environment TEXT DEFAULT 'TEST',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    
+    # Seed Categories if empty
+    try:
+        cursor.execute(sql_param("SELECT COUNT(*) FROM categories"))
+        count = cursor.fetchone()[0]
+        if count == 0:
+            default_cats = [
+                ('Salario', 'Ingreso'), ('Otros Ingresos', 'Ingreso'),
+                ('Alimentación', 'Gasto'), ('Transporte', 'Gasto'),
+                ('Vivienda', 'Gasto'), ('Servicios', 'Gasto'),
+                ('Entretenimiento', 'Gasto'), ('Salud', 'Gasto'),
+                ('Educación', 'Gasto'), ('Ropa', 'Gasto'),
+                ('Transferencia', 'Ingreso'), ('Transferencia', 'Gasto')
+            ]
+            print("Seeding default categories...")
+            for name, type_ in default_cats:
+                try:
+                    cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, 'TEST')"), (name, type_))
+                    cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, 'PROD')"), (name, type_))
+                except Exception as e:
+                    print(f"Skipping duplicate: {name}")
+    except Exception as e:
+        print(f"Error seeding categories: {e}")
+                
+    conn.commit()
+    conn.close()
+
+# Initialize DB tables
+init_budgets_db()
+
 class ConfigUpdate(BaseModel):
     env: str
 
@@ -1608,6 +1687,132 @@ def export_report(start_date: str = None, end_date: str = None):
         'Content-Disposition': f'attachment; filename="reporte_finance_{start_date}_{end_date}.xlsx"'
     }
     return Response(content=output.getvalue(), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers=headers)
+
+
+
+# --- BUDGETS & CATEGORIES ENDPOINTS ---
+
+class CategoryCreate(BaseModel):
+    nombre: str
+    tipo: str # Ingreso, Gasto
+    environment: str = 'TEST'
+
+@app.get("/categories")
+def get_categories(environment: str = "TEST"):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("SELECT id, nombre, tipo FROM categories WHERE environment = ? ORDER BY nombre"), (environment,))
+    rows = fetchall_as_dict(cursor)
+    conn.close()
+    return rows
+
+@app.post("/categories")
+def create_category(cat: CategoryCreate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, ?)"), 
+                       (cat.nombre, cat.tipo, cat.environment))
+        conn.commit()
+        return {"status": "ok", "message": "Category created"}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        conn.close()
+
+class BudgetCreate(BaseModel):
+    category: str
+    amount: float
+    month: str # YYYY-MM
+    environment: str = 'TEST'
+
+class BudgetUpdate(BaseModel):
+    amount: float
+
+@app.get("/budgets")
+def get_budgets(month: str, environment: str = "TEST"):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 1. Get Budgets
+    cursor.execute(sql_param("SELECT * FROM budgets WHERE month = ? AND environment = ?"), (month, environment))
+    budgets = fetchall_as_dict(cursor)
+    
+    # 2. Get Actual Spending for each budget category in that month
+    # We need to sum "gasto" from transactions where category matches and date is in the month
+    # Using simple string matching for month (YYYY-MM)
+    
+    budget_list = []
+    for b in budgets:
+        cat = b['category']
+        # Sum spending
+        cursor.execute(sql_param("""
+            SELECT SUM(gasto) FROM transactions 
+            WHERE environment = ? AND categoria = ? AND fecha LIKE ?
+        """), (environment, cat, f"{month}%"))
+        
+        row = cursor.fetchone()
+        spent = row[0] if row and row[0] else 0
+        
+        amount = b['amount']
+        remaining = amount - spent
+        percentage = (spent / amount * 100) if amount > 0 else 0
+        
+        b_dict = dict(b)
+        b_dict['spent'] = spent
+        b_dict['remaining'] = remaining
+        b_dict['percentage'] = percentage
+        b_dict['exceeded'] = spent > amount
+        
+        budget_list.append(b_dict)
+        
+    conn.close()
+    return budget_list
+
+@app.post("/budgets")
+def create_budget(budget: BudgetCreate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check duplicate
+    cursor.execute(sql_param("SELECT id FROM budgets WHERE category = ? AND month = ? AND environment = ?"), 
+                   (budget.category, budget.month, budget.environment))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="Ya existe un presupuesto para esta categoría en este mes")
+
+    cursor.execute(sql_param("""
+        INSERT INTO budgets (category, amount, month, environment, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """), (budget.category, budget.amount, budget.month, budget.environment, datetime.now()))
+    
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Budget created"}
+
+@app.put("/budgets/{budget_id}")
+def update_budget(budget_id: int, budget: BudgetUpdate):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param("UPDATE budgets SET amount = ? WHERE id = ?"), (budget.amount, budget_id))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Budget not found")
+        
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Budget updated"}
+
+@app.delete("/budgets/{budget_id}")
+def delete_budget(budget_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("DELETE FROM budgets WHERE id = ?"), (budget_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Budget deleted"}
 
 
 # --- Savings Goals ---
