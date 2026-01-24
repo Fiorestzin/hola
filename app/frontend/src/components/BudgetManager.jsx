@@ -31,7 +31,7 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
 
     const fetchCategories = async () => {
         try {
-            const res = await fetch(`${API_URL}/categories?environment=${environment || 'TEST'}`);
+            const res = await fetch(`${API_URL}/categories?environment=${environment || 'PROD'}`);
             const data = await res.json();
             setCategories(data);
         } catch (e) {
@@ -44,7 +44,7 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
         try {
             const query = new URLSearchParams({
                 month: selectedMonth,
-                environment: environment || 'TEST'
+                environment: environment || 'PROD'
             });
             const res = await fetch(`${API_URL}/budgets?${query}`);
             const data = await res.json();
@@ -68,7 +68,7 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
                     category: formData.category,
                     amount: parseFloat(formData.amount),
                     month: selectedMonth,
-                    environment: environment || 'TEST'
+                    environment: environment || 'PROD'
                 })
             });
             if (res.ok) {
@@ -272,8 +272,8 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
                             <div
                                 key={b.id}
                                 className={`p-3 rounded-xl border transition-all ${b.exceeded
-                                        ? 'bg-red-900/20 border-red-500/30'
-                                        : 'bg-slate-900/30 border-slate-700/50'
+                                    ? 'bg-red-900/20 border-red-500/30'
+                                    : 'bg-slate-900/30 border-slate-700/50'
                                     }`}
                             >
                                 {/* Header Row */}
@@ -342,10 +342,10 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
                                 <div className="h-3 w-full bg-slate-800 rounded-full overflow-hidden shadow-inner">
                                     <div
                                         className={`h-full rounded-full transition-all duration-700 ease-out shadow-lg ${b.percentage > 100
-                                                ? 'bg-gradient-to-r from-red-600 to-red-500 shadow-red-500/50'
-                                                : b.percentage > 80
-                                                    ? 'bg-gradient-to-r from-amber-500 to-yellow-400 shadow-yellow-500/50'
-                                                    : 'bg-gradient-to-r from-emerald-600 to-teal-400 shadow-emerald-500/50'
+                                            ? 'bg-gradient-to-r from-red-600 to-red-500 shadow-red-500/50'
+                                            : b.percentage > 80
+                                                ? 'bg-gradient-to-r from-amber-500 to-yellow-400 shadow-yellow-500/50'
+                                                : 'bg-gradient-to-r from-emerald-600 to-teal-400 shadow-emerald-500/50'
                                             }`}
                                         style={{ width: `${Math.min(b.percentage, 100)}%` }}
                                     ></div>
@@ -360,7 +360,7 @@ export default function BudgetManager({ isOpen, onClose, environment }) {
                                         }
                                     </span>
                                     <span className={`font-bold ${b.percentage > 100 ? 'text-red-400' :
-                                            b.percentage > 80 ? 'text-amber-400' : 'text-slate-400'
+                                        b.percentage > 80 ? 'text-amber-400' : 'text-slate-400'
                                         }`}>
                                         {b.percentage.toFixed(0)}%
                                     </span>
