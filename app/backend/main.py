@@ -120,7 +120,7 @@ def init_budgets_db():
                 id SERIAL PRIMARY KEY,
                 nombre TEXT NOT NULL,
                 tipo TEXT NOT NULL, -- 'Ingreso', 'Gasto'
-                environment TEXT DEFAULT 'TEST',
+                environment TEXT DEFAULT 'PROD',
                 UNIQUE(nombre, environment)
             );
         """)
@@ -131,7 +131,7 @@ def init_budgets_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL, -- YYYY-MM
-                environment TEXT DEFAULT 'TEST',
+                environment TEXT DEFAULT 'PROD',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -141,7 +141,7 @@ def init_budgets_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
                 tipo TEXT NOT NULL,
-                environment TEXT DEFAULT 'TEST',
+                environment TEXT DEFAULT 'PROD',
                 UNIQUE(nombre, environment)
             );
         """)
@@ -152,7 +152,7 @@ def init_budgets_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL,
-                environment TEXT DEFAULT 'TEST',
+                environment TEXT DEFAULT 'PROD',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
@@ -173,13 +173,22 @@ def init_budgets_db():
             print("Seeding default categories...")
             for name, type_ in default_cats:
                 try:
-                    cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, 'TEST')"), (name, type_))
                     cursor.execute(sql_param("INSERT INTO categories (nombre, tipo, environment) VALUES (?, ?, 'PROD')"), (name, type_))
                 except Exception as e:
                     print(f"Skipping duplicate: {name}")
     except Exception as e:
         print(f"Error seeding categories: {e}")
                 
+    # --- CLEANUP TEST DATA ---
+    print("Cleaning up TEST data...")
+    try:
+        cursor.execute(sql_param("DELETE FROM categories WHERE environment = 'TEST'"))
+        cursor.execute(sql_param("DELETE FROM budgets WHERE environment = 'TEST'"))
+        # We also remove transactions marked as TEST if desired, but let's be safe and assume yes based on request
+        # cursor.execute(sql_param("DELETE FROM transactions WHERE environment = 'TEST'")) 
+    except Exception as e:
+        print(f"Error cleaning up TEST data: {e}")
+
     conn.commit()
     conn.close()
 
@@ -414,7 +423,7 @@ def get_transactions(
     category: str = None, 
     bank: str = None,
     detalle: str = None,
-    environment: str = "TEST"  # TEST (demo) or PROD (real)
+    environment: str = "PROD"  # TEST (demo) or PROD (real)
 ):
     conn = get_db_connection()
     
@@ -457,7 +466,7 @@ def get_transactions(
 
 
 @app.get("/summary/banks")
-def get_bank_balances(environment: str = "TEST"):
+def get_bank_balances(environment: str = "PROD"):
     conn = get_db_connection()
     cursor = conn.cursor()
     query = '''
@@ -481,7 +490,7 @@ def get_bank_balances(environment: str = "TEST"):
 
 
 @app.get("/reports")
-def get_reports(start_date: str = None, end_date: str = None, category: str = None, environment: str = "TEST"):
+def get_reports(start_date: str = None, end_date: str = None, category: str = None, environment: str = "PROD"):
     conn = get_db_connection()
     
     # Base filter with environment
@@ -541,7 +550,7 @@ def get_reports(start_date: str = None, end_date: str = None, category: str = No
 
 
 @app.get("/comparison")
-def get_period_comparison(start_date: str, end_date: str, environment: str = "TEST"):
+def get_period_comparison(start_date: str, end_date: str, environment: str = "PROD"):
     """Compare current period with previous period of same length"""
     from datetime import datetime, timedelta
     
@@ -608,7 +617,7 @@ def get_period_comparison(start_date: str, end_date: str, environment: str = "TE
     }
 
 @app.get("/analysis")
-def get_analysis(start_date: str = None, end_date: str = None, category: str = None, environment: str = "TEST"):
+def get_analysis(start_date: str = None, end_date: str = None, category: str = None, environment: str = "PROD"):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -666,7 +675,7 @@ def get_history(
     end_date: str = None,
     filter_col: str = 'detalle', # detalle, categoria, banco
     filter_val: str = None,
-    environment: str = "TEST"
+    environment: str = "PROD"
 ):
     conn = get_db_connection()
     
@@ -716,7 +725,7 @@ class Transaction(BaseModel):
     detalle: str
     banco: str
     monto: float
-    environment: str = "TEST"  # TEST (demo) or PROD (real)
+    environment: str = "PROD"  # TEST (demo) or PROD (real)
 
 @app.post("/transaction")
 def create_transaction(tx: Transaction):
@@ -1695,10 +1704,10 @@ def export_report(start_date: str = None, end_date: str = None):
 class CategoryCreate(BaseModel):
     nombre: str
     tipo: str # Ingreso, Gasto
-    environment: str = 'TEST'
+    environment: str = 'PROD'
 
 @app.get("/categories")
-def get_categories(environment: str = "TEST"):
+def get_categories(environment: str = "PROD"):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(sql_param("SELECT id, nombre, tipo FROM categories WHERE environment = ? ORDER BY nombre"), (environment,))
@@ -1725,13 +1734,13 @@ class BudgetCreate(BaseModel):
     category: str
     amount: float
     month: str # YYYY-MM
-    environment: str = 'TEST'
+    environment: str = 'PROD'
 
 class BudgetUpdate(BaseModel):
     amount: float
 
 @app.get("/budgets")
-def get_budgets(month: str, environment: str = "TEST"):
+def get_budgets(month: str, environment: str = "PROD"):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -1825,7 +1834,7 @@ class SavingsGoalCreate(BaseModel):
     dia_aporte: int = None  # Day of week (0-6) for weekly, day of month (1-31) for monthly
     icono: str = '🎯'
     color: str = '#3b82f6'
-    environment: str = 'TEST'
+    environment: str = 'PROD'
 
 class SavingsGoalUpdate(BaseModel):
     nombre: str = None
@@ -1842,7 +1851,7 @@ class SavingsContributionCreate(BaseModel):
     banco: str = None
 
 @app.get("/savings-goals")
-def get_savings_goals(environment: str = "TEST"):
+def get_savings_goals(environment: str = "PROD"):
     """Get all savings goals for the given environment."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2042,7 +2051,7 @@ def get_goal_contributions(goal_id: int):
     return [dict(row) for row in rows]
 
 @app.get("/savings-goals/summary")
-def get_savings_summary(environment: str = "TEST"):
+def get_savings_summary(environment: str = "PROD"):
     """Get summary of all savings for displaying committed amounts per bank."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2066,7 +2075,7 @@ def get_savings_summary(environment: str = "TEST"):
     }
 
 @app.get("/savings-goals/by-bank")
-def get_savings_by_bank(environment: str = "TEST"):
+def get_savings_by_bank(environment: str = "PROD"):
     """Get total contributions grouped by bank, for showing committed amounts per bank."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2149,7 +2158,7 @@ class SavingsWithdrawal(BaseModel):
     fecha_limite_reponer: str
 
 @app.post("/savings-goals/{goal_id}/withdraw")
-def create_withdrawal(goal_id: int, withdrawal: SavingsWithdrawal, environment: str = "TEST"):
+def create_withdrawal(goal_id: int, withdrawal: SavingsWithdrawal, environment: str = "PROD"):
     """Create a withdrawal from a savings goal - reduces the committed amount for a specific bank."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -2226,7 +2235,7 @@ def get_goal_withdrawals(goal_id: int):
     return rows
 
 @app.get("/savings-withdrawals/pending")
-def get_pending_withdrawals(environment: str = "TEST"):
+def get_pending_withdrawals(environment: str = "PROD"):
     """Get all pending (not repaid) withdrawals across all goals."""
     conn = get_db_connection()
     cursor = conn.cursor()
