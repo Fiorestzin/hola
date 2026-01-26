@@ -2050,6 +2050,64 @@ def get_goal_contributions(goal_id: int):
         return [{"id": r[0], "monto": r[1], "fecha": r[2], "banco": r[3]} for r in rows]
     return [dict(row) for row in rows]
 
+@app.get("/savings-goals/{goal_id}/history")
+def get_goal_history(goal_id: int):
+    """Get unified history of contributions (positive) and withdrawals (negative)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if goal exists
+    cursor.execute(sql_param("SELECT id FROM savings_goals WHERE id = ?"), (goal_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meta no encontrada")
+    
+    # Get Contributions
+    cursor.execute(sql_param('''
+        SELECT id, monto, fecha, banco FROM savings_contributions 
+        WHERE goal_id = ?
+    '''), (goal_id,))
+    contributions = fetchall_as_dict(cursor)
+    
+    # Get Withdrawals
+    cursor.execute(sql_param('''
+        SELECT id, monto, fecha, banco, motivo FROM savings_withdrawals 
+        WHERE goal_id = ?
+    '''), (goal_id,))
+    withdrawals = fetchall_as_dict(cursor)
+    
+    conn.close()
+    
+    # Combine and standardize
+    history = []
+    
+    for c in contributions:
+        history.append({
+            "id": f"c_{c['id']}", # Unique ID for list
+            "original_id": c['id'],
+            "fecha": c['fecha'],
+            "monto": c['monto'], # Positive
+            "tipo": "Aporte",
+            "banco": c['banco'],
+            "detalle": "Aporte"
+        })
+        
+    for w in withdrawals:
+        history.append({
+            "id": f"w_{w['id']}",
+            "original_id": w['id'],
+            "fecha": w['fecha'],
+            "monto": -w['monto'], # Negative
+            "tipo": "Retiro",
+            "banco": w['banco'],
+            "detalle": w.get('motivo') or "Retiro"
+        })
+    
+    # Sort by date descending
+    history.sort(key=lambda x: x['fecha'], reverse=True)
+    
+    return history
+
 @app.get("/savings-goals/summary")
 def get_savings_summary(environment: str = "PROD"):
     """Get summary of all savings for displaying committed amounts per bank."""

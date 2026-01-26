@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, Calendar, TrendingUp, TrendingDown, Building2, Filter, ArrowUpDown } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { X, Calendar, TrendingUp, TrendingDown, Building2, Filter, ArrowUpDown, Search } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { API_URL } from "../config";
 
@@ -12,6 +12,27 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
     const [totals, setTotals] = useState({ ingresos: 0, gastos: 0, saldo: 0 });
     const [chartView, setChartView] = useState('monthly'); // 'monthly' or 'yearly'
 
+    // Filters
+    const [searchTerm, setSearchTerm] = useState('');
+    const [minAmount, setMinAmount] = useState('');
+    const [maxAmount, setMaxAmount] = useState('');
+
+    const filteredTransactions = useMemo(() => {
+        return transactions.filter(tx => {
+            // Text Search
+            const matchesSearch = !searchTerm ||
+                (tx.detalle || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (tx.categoria || '').toLowerCase().includes(searchTerm.toLowerCase());
+
+            // Amount Range (using absolute value/magnitude)
+            const amount = tx.ingreso || tx.gasto || 0;
+            const matchesMin = !minAmount || amount >= parseFloat(minAmount);
+            const matchesMax = !maxAmount || amount <= parseFloat(maxAmount);
+
+            return matchesSearch && matchesMin && matchesMax;
+        });
+    }, [transactions, searchTerm, minAmount, maxAmount]);
+
     useEffect(() => {
         if (isOpen && bankName) {
             fetchTransactions();
@@ -19,10 +40,10 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
     }, [isOpen, bankName, startDate, endDate, environment]);
 
     useEffect(() => {
-        if (transactions.length > 0) {
-            processChartData(transactions);
-        }
-    }, [chartView, transactions]);
+        // Always process, even if empty, to update totals/chart to 0
+        processChartData(filteredTransactions);
+        calculateTotals(filteredTransactions);
+    }, [chartView, filteredTransactions]);
 
     const fetchTransactions = async () => {
         setLoading(true);
@@ -36,7 +57,8 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                 const data = await res.json();
                 setTransactions(data);
                 processChartData(data);
-                calculateTotals(data);
+                // Totals will be updated by the useEffect dependent on filteredTransactions
+                // setTransactions set here triggers the chain
             }
         } catch (error) {
             console.error('Error fetching bank transactions:', error);
@@ -165,8 +187,42 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                         </button>
                     )}
                     <span className="text-slate-500 text-sm ml-auto">
-                        {transactions.length} movimientos
+                        {filteredTransactions.length} movimientos
                     </span>
+                </div>
+
+                {/* Secondary Filters (Client Side) */}
+                <div className="p-4 bg-slate-800/50 border-b border-slate-700 flex flex-wrap items-center gap-4 animate-in fade-in slide-in-from-top-2">
+                    {/* Search */}
+                    <div className="flex items-center bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 w-full sm:w-auto flex-1 max-w-sm">
+                        <Search size={16} className="text-slate-400 mr-2" />
+                        <input
+                            type="text"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            placeholder="Buscar detalle o categoría..."
+                            className="bg-transparent text-sm text-white focus:outline-none w-full placeholder-slate-500"
+                        />
+                    </div>
+
+                    {/* Amount Range */}
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="number"
+                            value={minAmount}
+                            onChange={(e) => setMinAmount(e.target.value)}
+                            placeholder="Monto min"
+                            className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 w-28"
+                        />
+                        <span className="text-slate-500">-</span>
+                        <input
+                            type="number"
+                            value={maxAmount}
+                            onChange={(e) => setMaxAmount(e.target.value)}
+                            placeholder="Monto max"
+                            className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 w-28"
+                        />
+                    </div>
                 </div>
 
                 {/* Chart */}
@@ -180,8 +236,8 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                                 <button
                                     onClick={() => setChartView('monthly')}
                                     className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${chartView === 'monthly'
-                                            ? 'bg-blue-600 text-white'
-                                            : 'text-slate-400 hover:text-white'
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-slate-400 hover:text-white'
                                         }`}
                                 >
                                     Mensual
@@ -189,8 +245,8 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                                 <button
                                     onClick={() => setChartView('yearly')}
                                     className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${chartView === 'yearly'
-                                            ? 'bg-blue-600 text-white'
-                                            : 'text-slate-400 hover:text-white'
+                                        ? 'bg-blue-600 text-white'
+                                        : 'text-slate-400 hover:text-white'
                                         }`}
                                 >
                                     Anual
@@ -213,6 +269,7 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                                     <Tooltip
                                         contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '8px' }}
                                         labelFormatter={formatPeriod}
+                                        cursor={{ fill: 'transparent' }}
                                         formatter={(value, name) => [fmt(value), name === 'ingresos' ? 'Ingresos' : 'Gastos']}
                                     />
                                     <Legend
@@ -233,8 +290,8 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                         <div className="flex items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
                         </div>
-                    ) : transactions.length === 0 ? (
-                        <p className="text-slate-500 text-center py-8">No hay movimientos para este banco</p>
+                    ) : filteredTransactions.length === 0 ? (
+                        <p className="text-slate-500 text-center py-8">No hay movimientos que coincidan con los filtros</p>
                     ) : (
                         <table className="w-full text-left">
                             <thead>
@@ -246,7 +303,7 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                                 </tr>
                             </thead>
                             <tbody className="text-sm">
-                                {transactions.map((tx) => (
+                                {filteredTransactions.map((tx) => (
                                     <tr key={tx.id} className="border-b border-slate-700/30 hover:bg-slate-700/40 transition-colors">
                                         <td className="py-3 text-slate-300 font-mono text-xs">{tx.fecha}</td>
                                         <td className="py-3 text-slate-200">{tx.detalle || 'Sin detalle'}</td>
