@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target, Pencil } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target, Pencil, Eye, EyeOff } from 'lucide-react';
 import QuickAdd from './components/QuickAdd';
 import CategoriesManager from './components/CategoriesManager';
 import BanksManager from './components/BanksManager';
@@ -12,7 +12,7 @@ import SavingsGoalsModal from './components/SavingsGoalsModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import BankDetailsModal from './components/BankDetailsModal';
 import Login from "./components/Login";
-import { API_URL } from "./config";
+import { API_URL, APP_ENV } from "./config";
 
 function App() {
   const [transactions, setTransactions] = useState([]);
@@ -58,6 +58,42 @@ function App() {
   const [isBankDetailsOpen, setIsBankDetailsOpen] = useState(false);
   const [selectedBank, setSelectedBank] = useState(null);
 
+  // Privacy Mode State
+  const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
+    const saved = localStorage.getItem('privacy_mode');
+    return saved === 'true';
+  });
+  const [hiddenBanks, setHiddenBanks] = useState(() => {
+    const saved = localStorage.getItem('hidden_banks');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  // Perspective consistency: whenever state changes, save to localStorage
+  useEffect(() => {
+    localStorage.setItem('privacy_mode', isPrivacyMode);
+  }, [isPrivacyMode]);
+
+  useEffect(() => {
+    localStorage.setItem('hidden_banks', JSON.stringify(hiddenBanks));
+  }, [hiddenBanks]);
+
+  const toggleGlobalPrivacy = () => setIsPrivacyMode(!isPrivacyMode);
+
+  const toggleBankPrivacy = (e, bankName) => {
+    e.stopPropagation(); // Avoid opening details modal
+    setHiddenBanks(prev =>
+      prev.includes(bankName)
+        ? prev.filter(name => name !== bankName)
+        : [...prev, bankName]
+    );
+  };
+
+  const formatPrivacy = (amount, bankName = null) => {
+    const isHidden = isPrivacyMode || (bankName && hiddenBanks.includes(bankName));
+    if (isHidden) return "********";
+    return fmt(amount);
+  };
+
   // Check if already logged in on startup
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
@@ -101,31 +137,31 @@ function App() {
   // Fetch data function
   const fetchData = async () => {
     try {
-      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=PROD`);
+      const txRes = await fetch(`${API_URL}/transactions?limit=20&environment=${APP_ENV}`);
       const txData = await txRes.json();
       setTransactions(txData);
 
-      const bankRes = await fetch(`${API_URL}/summary/banks?environment=PROD`);
+      const bankRes = await fetch(`${API_URL}/summary/banks?environment=${APP_ENV}`);
       const bankData = await bankRes.json();
       setBanks(bankData);
 
       // Fetch savings summary for committed balance display
       try {
-        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=PROD`);
+        const savingsRes = await fetch(`${API_URL}/savings-goals/summary?environment=${APP_ENV}`);
         if (savingsRes.ok) {
           const savingsData = await savingsRes.json();
           setSavingsSummary(savingsData);
         }
 
         // Fetch per-bank savings
-        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=PROD`);
+        const byBankRes = await fetch(`${API_URL}/savings-goals/by-bank?environment=${APP_ENV}`);
         if (byBankRes.ok) {
           const byBankData = await byBankRes.json();
           setSavingsByBank(byBankData);
         }
 
         // Fetch pending withdrawals by bank
-        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=PROD`);
+        const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=${APP_ENV}`);
         if (pendingRes.ok) {
           const pendingData = await pendingRes.json();
           // Group by bank
@@ -177,7 +213,7 @@ function App() {
   const handleSaveTransaction = async (data) => {
     try {
       // Inject current environment into the transaction data
-      const payload = { ...data, environment: "PROD" };
+      const payload = { ...data, environment: APP_ENV };
 
       const res = await fetch(`${API_URL}/transaction`, {
         method: 'POST',
@@ -233,12 +269,23 @@ function App() {
           <div className="flex items-center gap-6">
             <div className="text-center md:text-right">
               <p className="text-sm text-slate-400">Patrimonio Neto</p>
-              <p className={`text-2xl font-bold ${totalSaldo >= 0 ? 'text-white' : 'text-rose-400'}`}>{fmt(totalSaldo)}</p>
+              <div className="flex items-center gap-2 justify-center md:justify-end">
+                <p className={`text-2xl font-bold ${totalSaldo >= 0 ? 'text-white' : 'text-rose-400'}`}>
+                  {formatPrivacy(totalSaldo)}
+                </p>
+                <button
+                  onClick={toggleGlobalPrivacy}
+                  className="p-1.5 hover:bg-slate-700/50 rounded-lg text-slate-400 hover:text-white transition-colors"
+                  title={isPrivacyMode ? "Mostrar todo" : "Ocultar todo"}
+                >
+                  {isPrivacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
               {totalAhorrado > 0 && (
                 <div className="mt-1 flex flex-col items-end">
                   <span className="text-[10px] text-emerald-400/80 uppercase tracking-wider font-bold">Disponible Real</span>
                   <span className={`text-lg font-bold ${saldoDisponible >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-                    {fmt(saldoDisponible)}
+                    {formatPrivacy(saldoDisponible)}
                   </span>
                 </div>
               )}
@@ -308,26 +355,35 @@ function App() {
                   }}
                 >
                   <div className="flex justify-between items-start mb-2">
-                    <h3 className="font-bold text-lg text-slate-200 group-hover:text-blue-300 transition-colors">{bankName}</h3>
-                    <span className={`text-[10px] uppercase font-bold px-2 py-1 rounded-full ${bank.saldo >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
-                      {bank.saldo >= 0 ? 'Activo' : 'Deuda'}
-                    </span>
+                    <div className="flex flex-col">
+                      <h3 className="font-bold text-lg text-slate-200 group-hover:text-blue-300 transition-colors">{bankName}</h3>
+                      <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-full w-fit mt-1 ${bank.saldo >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+                        {bank.saldo >= 0 ? 'Activo' : 'Deuda'}
+                      </span>
+                    </div>
+                    <button
+                      onClick={(e) => toggleBankPrivacy(e, bankName)}
+                      className="p-1 hover:bg-slate-700 rounded text-slate-500 hover:text-white transition-colors"
+                      title={hiddenBanks.includes(bankName) ? "Mostrar saldo" : "Ocultar saldo"}
+                    >
+                      {hiddenBanks.includes(bankName) || isPrivacyMode ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   </div>
                   <div className="mt-4">
                     <p className="text-sm text-slate-500">Saldo Real</p>
                     <p className={`text-2xl font-bold truncate ${bank.saldo < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                      {fmt(bank.saldo)}
+                      {formatPrivacy(bank.saldo, bankName)}
                     </p>
                   </div>
                   {aportadoDesdeBanco > 0 && (
                     <div className="mt-2 pt-2 border-t border-slate-700/50">
                       <div className="flex justify-between text-xs">
                         <span className="text-amber-400/70">🐷 Comprometido:</span>
-                        <span className="text-amber-300">{fmt(aportadoDesdeBanco)}</span>
+                        <span className="text-amber-300">{formatPrivacy(aportadoDesdeBanco, bankName)}</span>
                       </div>
                       <div className="flex justify-between text-sm mt-1">
                         <span className="text-slate-400">Disponible:</span>
-                        <span className={`font-bold ${disponible < 0 ? 'text-rose-400' : 'text-slate-200'}`}>{fmt(disponible)}</span>
+                        <span className={`font-bold ${disponible < 0 ? 'text-rose-400' : 'text-slate-200'}`}>{formatPrivacy(disponible, bankName)}</span>
                       </div>
                     </div>
                   )}
@@ -335,7 +391,7 @@ function App() {
                     <div className="mt-2 p-2 bg-amber-900/30 border border-amber-600/50 rounded-lg">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-amber-400 font-semibold">⚠️ Pendiente reponer:</span>
-                        <span className="text-amber-300 font-bold">{fmt(pendingReponer)}</span>
+                        <span className="text-amber-300 font-bold">{formatPrivacy(pendingReponer, bankName)}</span>
                       </div>
                     </div>
                   )}
@@ -357,13 +413,13 @@ function App() {
                 <div className="mt-4">
                   <p className="text-sm text-emerald-400/70">Total Comprometido</p>
                   <p className="text-2xl font-bold truncate text-emerald-300">
-                    {fmt(savingsSummary.total_ahorrado)}
+                    {formatPrivacy(savingsSummary.total_ahorrado)}
                   </p>
                 </div>
                 <div className="mt-2 pt-2 border-t border-emerald-700/30">
                   <p className="text-xs text-emerald-400/60">Disponible sin ahorros:</p>
                   <p className="text-sm font-semibold text-slate-300">
-                    {fmt(totalSaldo - savingsSummary.total_ahorrado)}
+                    {formatPrivacy(totalSaldo - savingsSummary.total_ahorrado)}
                   </p>
                 </div>
               </div>
@@ -501,14 +557,14 @@ function App() {
         }
         onSave={handleSaveTransaction}
         type={modalType}
-        environment="PROD"
+        environment={APP_ENV}
       />
 
       {/* Categories Manager */}
       < CategoriesManager
         isOpen={isCatsOpen}
         onClose={() => setIsCatsOpen(false)}
-        environment="PROD"
+        environment={APP_ENV}
         onCategoryChange={() => fetchData()}
       />
 
@@ -516,7 +572,7 @@ function App() {
       <BanksManager
         isOpen={isBanksOpen}
         onClose={() => setIsBanksOpen(false)}
-        environment="PROD"
+        environment={APP_ENV}
       />
 
       {/* Advanced Reports */}
@@ -524,7 +580,7 @@ function App() {
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
         totalNetWorth={saldoDisponible}
-        environment="PROD"
+        environment={APP_ENV}
       />
 
       {/* Settings Panel */}
@@ -538,7 +594,7 @@ function App() {
       <TransferModal
         isOpen={isTransferOpen}
         onClose={() => setIsTransferOpen(false)}
-        environment="PROD"
+        environment={APP_ENV}
         onTransferComplete={() => fetchData()}
       />
 
@@ -546,7 +602,7 @@ function App() {
       <SavingsGoalsModal
         isOpen={isSavingsOpen}
         onClose={() => setIsSavingsOpen(false)}
-        environment="PROD"
+        environment={APP_ENV}
         onGoalChange={() => fetchData()}
       />
 
@@ -554,7 +610,7 @@ function App() {
       <BudgetManager
         isOpen={isBudgetOpen}
         onClose={() => setIsBudgetOpen(false)}
-        environment="PROD"
+        environment={APP_ENV}
       />
 
       {/* Edit Transaction Modal */}
@@ -565,7 +621,7 @@ function App() {
           setSelectedTransaction(null);
         }}
         transaction={selectedTransaction}
-        environment="PROD"
+        environment={APP_ENV}
         onUpdate={() => fetchData()}
         onDelete={() => fetchData()}
         token={token}
@@ -579,7 +635,7 @@ function App() {
           setSelectedBank(null);
         }}
         bankName={selectedBank}
-        environment="PROD"
+        environment={APP_ENV}
       />
     </div >
   );

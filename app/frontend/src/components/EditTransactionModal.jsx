@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Trash2, AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, Tag, Building2, FileText } from 'lucide-react';
+import { X, Save, Trash2, AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, Tag, Building2, FileText, Calculator, Percent } from 'lucide-react';
 import { API_URL } from "../config";
 
 export default function EditTransactionModal({
@@ -27,6 +27,11 @@ export default function EditTransactionModal({
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [deletePhrase, setDeletePhrase] = useState('');
 
+    // Net/Gross Calculator State
+    const [isNetMode, setIsNetMode] = useState(false);
+    const [netAmount, setNetAmount] = useState('');
+    const [taxRate, setTaxRate] = useState(19);
+
     // Load transaction data when modal opens
     useEffect(() => {
         if (isOpen && transaction) {
@@ -42,11 +47,36 @@ export default function EditTransactionModal({
             setShowDeleteConfirm(false);
             setDeletePhrase('');
 
+            // Reset Net Mode
+            setIsNetMode(false);
+            setNetAmount('');
+
             // Fetch categories and banks
             fetchCategories();
             fetchBanks();
         }
     }, [isOpen, transaction, environment]);
+
+    // Calculate Gross automatically when Net or Tax changes
+    useEffect(() => {
+        if (isNetMode && netAmount) {
+            const net = parseFloat(netAmount);
+            const tax = parseFloat(taxRate) || 0;
+            if (!isNaN(net)) {
+                const gross = Math.round(net * (1 + tax / 100));
+                setFormData(prev => ({ ...prev, monto: gross.toString() }));
+            }
+        }
+    }, [netAmount, taxRate, isNetMode]);
+
+    const handleNetToggle = (enabled) => {
+        setIsNetMode(enabled);
+        if (enabled && formData.monto) {
+            setNetAmount(formData.monto);
+        } else if (!enabled && netAmount) {
+            setFormData(prev => ({ ...prev, monto: netAmount }));
+        }
+    };
 
     const fetchCategories = async () => {
         try {
@@ -164,6 +194,7 @@ export default function EditTransactionModal({
 
     const handleMontoChange = (e) => {
         const raw = e.target.value.replace(/\D/g, '');
+        setIsNetMode(false); // Disable net if manual
         setFormData({ ...formData, monto: raw });
     };
 
@@ -196,8 +227,8 @@ export default function EditTransactionModal({
                             type="button"
                             onClick={() => setFormData({ ...formData, tipo: 'Ingreso', categoria: '' })}
                             className={`flex-1 py-2 rounded-lg font-bold transition-all ${isIngreso
-                                    ? 'bg-emerald-600 text-white'
-                                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                                 }`}
                         >
                             <TrendingUp size={16} className="inline mr-1" /> Ingreso
@@ -206,27 +237,86 @@ export default function EditTransactionModal({
                             type="button"
                             onClick={() => setFormData({ ...formData, tipo: 'Gasto', categoria: '' })}
                             className={`flex-1 py-2 rounded-lg font-bold transition-all ${!isIngreso
-                                    ? 'bg-rose-600 text-white'
-                                    : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                                 }`}
                         >
                             <TrendingDown size={16} className="inline mr-1" /> Gasto
                         </button>
                     </div>
 
-                    {/* Amount */}
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
-                            <DollarSign size={14} /> Monto
-                        </label>
-                        <input
-                            type="text"
-                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-xl font-bold focus:outline-none focus:border-blue-500"
-                            placeholder="0"
-                            value={formatMonto(formData.monto)}
-                            onChange={handleMontoChange}
-                            required
-                        />
+                    <div className="space-y-3">
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
+                                <DollarSign size={14} /> Monto {isNetMode ? 'Bruto (Final)' : ''}
+                            </label>
+                            <input
+                                type="text"
+                                className={`w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white text-xl font-bold focus:outline-none transition-colors ${isNetMode ? 'opacity-70 border-blue-500/50 text-blue-300' : 'focus:border-blue-500'}`}
+                                placeholder="0"
+                                value={formatMonto(formData.monto)}
+                                onChange={handleMontoChange}
+                                readOnly={isNetMode}
+                                required
+                            />
+                        </div>
+
+                        {/* Net Calculator Toggle */}
+                        <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className="relative">
+                                    <input
+                                        type="checkbox"
+                                        className="sr-only peer"
+                                        checked={isNetMode}
+                                        onChange={(e) => handleNetToggle(e.target.checked)}
+                                    />
+                                    <div className="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-colors"></div>
+                                    <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-5"></div>
+                                </div>
+                                <span className={`text-sm font-medium transition-colors flex items-center gap-1 ${isNetMode ? 'text-blue-400' : 'text-slate-400 group-hover:text-slate-200'}`}>
+                                    <Calculator size={14} /> Tratar como Monto Neto (+ IVA)
+                                </span>
+                            </label>
+                            {isNetMode && (
+                                <div className="ml-auto text-[10px] font-bold text-blue-500 uppercase tracking-widest animate-pulse">
+                                    Calculando...
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Net Options */}
+                        {isNetMode && (
+                            <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-2 duration-200 bg-slate-900/50 p-3 rounded-xl border border-blue-500/20">
+                                <div>
+                                    <label className="block text-[10px] text-blue-400/70 mb-1 flex items-center gap-1 uppercase tracking-wider font-bold">
+                                        Editar Neto
+                                    </label>
+                                    <input
+                                        type="number"
+                                        autoFocus
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 text-lg"
+                                        placeholder="Neto"
+                                        value={netAmount}
+                                        onChange={(e) => setNetAmount(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] text-blue-400/70 mb-1 flex items-center gap-1 uppercase tracking-wider font-bold">
+                                        IVA / Impuesto %
+                                    </label>
+                                    <div className="relative">
+                                        <input
+                                            type="number"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-blue-500 pr-8 text-lg"
+                                            value={taxRate}
+                                            onChange={(e) => setTaxRate(e.target.value)}
+                                        />
+                                        <Percent size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Date and Bank */}
@@ -334,8 +424,8 @@ export default function EditTransactionModal({
                             type="submit"
                             disabled={loading}
                             className={`flex-1 font-bold py-3 px-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${isIngreso
-                                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
-                                    : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'
+                                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-500/20'
+                                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-500/20'
                                 }`}
                         >
                             <Save size={18} />
