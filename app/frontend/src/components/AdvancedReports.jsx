@@ -20,9 +20,12 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         end: new Date().toISOString().split('T')[0]
     });
 
-    // Category filter
+    // Category and Bank filters
     const [categoryFilter, setCategoryFilter] = useState('');
+    const [bankFilter, setBankFilter] = useState('');
+    const [searchFilter, setSearchFilter] = useState('');
     const [availableCategories, setAvailableCategories] = useState([]);
+    const [availableBanks, setAvailableBanks] = useState([]);
 
     // Data States
     const [data, setData] = useState({ pie_data: [], bar_data: [] });
@@ -54,8 +57,9 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             fetchForecast();
             fetchComparison();
             fetchCategories();
+            fetchBanks();
         }
-    }, [isOpen, dateRange, categoryFilter, environment]);
+    }, [isOpen, dateRange, categoryFilter, bankFilter, searchFilter, environment]);
 
     // Fetch available categories
     const fetchCategories = async () => {
@@ -68,6 +72,16 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         }
     };
 
+    const fetchBanks = async () => {
+        try {
+            const res = await fetch(`${API_URL}/banks?environment=${environment}`);
+            const banks = await res.json();
+            setAvailableBanks(banks.map(b => b.nombre));
+        } catch (error) {
+            console.error("Error fetching banks:", error);
+        }
+    };
+
     const fetchReports = async () => {
         setLoading(true);
         try {
@@ -77,6 +91,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 environment: environment
             });
             if (categoryFilter) query.append('category', categoryFilter);
+            if (bankFilter) query.append('bank', bankFilter);
+            if (searchFilter) query.append('detalle', searchFilter);
 
             const res = await fetch(`${API_URL}/reports?${query}`);
             const json = await res.json();
@@ -96,6 +112,9 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 environment: environment
             });
             if (categoryFilter) query.append('category', categoryFilter);
+            if (bankFilter) query.append('bank', bankFilter);
+            if (searchFilter) query.append('detalle', searchFilter);
+
             const res = await fetch(`${API_URL}/analysis?${query}`);
             const json = await res.json();
             setAnalysisData(json);
@@ -123,6 +142,10 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 end_date: dateRange.end,
                 environment: environment
             });
+            if (categoryFilter) query.append('category', categoryFilter);
+            if (bankFilter) query.append('bank', bankFilter);
+            if (searchFilter) query.append('detalle', searchFilter);
+
             const res = await fetch(`${API_URL}/comparison?${query}`);
             const json = await res.json();
             setComparisonData(json);
@@ -520,17 +543,43 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                 onChange={(e) => setCategoryFilter(e.target.value)}
                                 className="bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 min-w-[140px]"
                             >
-                                <option value="">Todas las categorías</option>
+                                <option value="">Categoría: Todas</option>
                                 {availableCategories.map(cat => (
                                     <option key={cat} value={cat}>{cat}</option>
                                 ))}
                             </select>
+
+                            {/* Bank Filter */}
+                            <select
+                                value={bankFilter}
+                                onChange={(e) => setBankFilter(e.target.value)}
+                                className="bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 min-w-[140px]"
+                            >
+                                <option value="">Banco: Todos</option>
+                                {availableBanks.map(b => (
+                                    <option key={b} value={b}>{b}</option>
+                                ))}
+                            </select>
+
+                            {/* Search Filter */}
+                            <div className="flex items-center bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 focus-within:border-blue-500">
+                                <List size={14} className="text-slate-400 mr-2" />
+                                <input
+                                    type="text"
+                                    value={searchFilter}
+                                    onChange={(e) => setSearchFilter(e.target.value)}
+                                    placeholder="Buscar detalle..."
+                                    className="bg-transparent text-white text-sm focus:outline-none w-32 md:w-40"
+                                />
+                            </div>
 
                             {/* Clear Filters Button */}
                             <button
                                 onClick={() => {
                                     setDateRange({ start: '2000-01-01', end: new Date().toISOString().split('T')[0] });
                                     setCategoryFilter('');
+                                    setBankFilter('');
+                                    setSearchFilter('');
                                 }}
                                 className="bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
                                 title="Limpiar todos los filtros"
@@ -561,6 +610,45 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                         </button>
                     </div>
                 </header>
+
+                {/* Filter Summary Badge */}
+                {(categoryFilter || bankFilter || searchFilter) && comparisonData && (
+                    <div className="flex flex-wrap items-center gap-3 bg-indigo-500/10 border border-indigo-500/30 p-4 rounded-xl animate-in slide-in-from-top-2 duration-300">
+                        <div className="bg-indigo-500/20 p-2 rounded-lg">
+                            <List className="text-indigo-400" size={20} />
+                        </div>
+                        <div>
+                            <p className="text-xs text-indigo-300 font-bold uppercase tracking-wider">Filtro Activo Aplicado</p>
+                            <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mt-1">
+                                {comparisonData.current.ingreso > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-400 text-sm">Total Ingresos:</span>
+                                        <span className="text-emerald-400 font-bold">{fmt(comparisonData.current.ingreso)}</span>
+                                    </div>
+                                )}
+                                {comparisonData.current.gasto > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-400 text-sm">Total Gastos:</span>
+                                        <span className="text-rose-400 font-bold">{fmt(comparisonData.current.gasto)}</span>
+                                    </div>
+                                )}
+                                {comparisonData.current.ingreso > 0 && comparisonData.current.gasto > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-slate-400 text-sm">Balance:</span>
+                                        <span className={`font-bold ${comparisonData.current.ingreso - comparisonData.current.gasto >= 0 ? 'text-cyan-400' : 'text-amber-400'}`}>
+                                            {fmt(comparisonData.current.ingreso - comparisonData.current.gasto)}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="ml-auto flex items-center gap-2">
+                            {categoryFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Cat: {categoryFilter}</span>}
+                            {bankFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Banco: {bankFilter}</span>}
+                            {searchFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Busca: {searchFilter}</span>}
+                        </div>
+                    </div>
+                )}
 
                 {loading ? (
                     <div className="h-64 flex items-center justify-center text-slate-500">

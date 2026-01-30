@@ -114,6 +114,43 @@ export default function DrillDownModal({ isOpen, onClose, title, transactions, e
                     </div>
                 </div>
 
+                {/* Filter Summary Info */}
+                {(filterDetail || filterMinAmount) && (() => {
+                    const totalInc = filteredTx.reduce((s, t) => s + (t.ingreso || 0), 0);
+                    const totalExp = filteredTx.reduce((s, t) => s + (t.gasto || 0), 0);
+                    const balance = totalInc - totalExp;
+
+                    return (
+                        <div className="mx-6 mt-4 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl flex items-center justify-between animate-in slide-in-from-top-2">
+                            <div className="flex items-center gap-6">
+                                <div className="flex flex-col">
+                                    <span className="text-[10px] text-cyan-400 uppercase font-black tracking-widest mb-1">Subtotal Filtrado</span>
+                                    <div className="flex items-center gap-4">
+                                        {totalInc > 0 && totalExp > 0 ? (
+                                            <>
+                                                <span className="text-emerald-400 font-bold">+{fmt(totalInc)}</span>
+                                                <span className="text-rose-400 font-bold">-{fmt(totalExp)}</span>
+                                                <div className="h-4 w-px bg-slate-700"></div>
+                                                <span className={`text-lg font-black ${balance >= 0 ? 'text-cyan-400' : 'text-amber-400'}`}>
+                                                    {fmt(balance)}
+                                                </span>
+                                            </>
+                                        ) : totalInc > 0 ? (
+                                            <span className="text-2xl font-black text-emerald-400">+{fmt(totalInc)}</span>
+                                        ) : (
+                                            <span className="text-2xl font-black text-rose-400">-{fmt(totalExp)}</span>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+                                <p className="text-[10px] text-slate-400 font-bold uppercase">Movimientos</p>
+                                <p className="text-sm text-white font-black text-center">{filteredTx.length}</p>
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
 

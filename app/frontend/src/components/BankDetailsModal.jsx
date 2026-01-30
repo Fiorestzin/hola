@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { X, Calendar, TrendingUp, TrendingDown, Building2, Filter, ArrowUpDown, Search } from 'lucide-react';
+import { X, Calendar, TrendingUp, TrendingDown, Building2, Filter, ArrowUpDown, Search, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { API_URL } from "../config";
 
@@ -18,7 +18,7 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
     const [maxAmount, setMaxAmount] = useState('');
 
     const filteredTransactions = useMemo(() => {
-        return transactions.filter(tx => {
+        const filtered = transactions.filter(tx => {
             // Text Search
             const matchesSearch = !searchTerm ||
                 (tx.detalle || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -31,7 +31,10 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
 
             return matchesSearch && matchesMin && matchesMax;
         });
+        return filtered;
     }, [transactions, searchTerm, minAmount, maxAmount]);
+
+    const isFiltered = !!(searchTerm || minAmount || maxAmount);
 
     useEffect(() => {
         if (isOpen && bankName) {
@@ -228,10 +231,28 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
                 {/* Chart */}
                 {chartData.length > 0 && (
                     <div className="p-5 border-b border-slate-700">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-sm font-semibold text-slate-400">
-                                Comparativa Ingresos vs Gastos {chartView === 'yearly' ? 'por Año' : '(Últimos 12 meses)'}
-                            </h3>
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                            <div>
+                                <h3 className="text-sm font-semibold text-slate-400 flex items-center gap-2">
+                                    <BarChart3 size={16} className="text-blue-400" />
+                                    Comparativa {chartView === 'yearly' ? 'por Año' : '(Últimos 12 meses)'}
+                                </h3>
+                                {isFiltered && (
+                                    <div className="flex items-center gap-3 mt-2 bg-blue-500/10 border border-blue-500/30 px-3 py-1.5 rounded-lg animate-in fade-in zoom-in duration-300">
+                                        <div className="flex flex-col">
+                                            <span className="text-[10px] text-blue-400 uppercase font-bold tracking-wider">Subtotal Filtrado</span>
+                                            <div className="flex items-center gap-4">
+                                                <span className="text-xs font-bold text-emerald-400">+{fmt(totals.ingresos)}</span>
+                                                <span className="text-xs font-bold text-rose-400">-{fmt(totals.gastos)}</span>
+                                                <div className="h-3 w-px bg-slate-700 mx-1"></div>
+                                                <span className={`text-sm font-black ${totals.saldo >= 0 ? 'text-blue-400' : 'text-amber-400'}`}>
+                                                    {fmt(totals.saldo)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                             <div className="flex gap-1 bg-slate-900 rounded-lg p-1">
                                 <button
                                     onClick={() => setChartView('monthly')}

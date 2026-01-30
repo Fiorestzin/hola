@@ -46,8 +46,8 @@ USE_POSTGRES = DATABASE_URL is not None and HAS_POSTGRES
 
 # SQLite fallback config
 class GlobalConfig:
-    ENV = "PROD"
-    DB_FILENAME = "finance_prod.db"
+    ENV = "TEST"
+    DB_FILENAME = "finance_test.db"
 
 config = GlobalConfig()
 
@@ -389,7 +389,7 @@ async def get_delete_phrase(current_user = Depends(get_current_user)):
     return {"phrase": row[0] if row else "fiorestzin"}
 
 # Global environment state (shared across requests)
-current_environment = "PROD"  # Default to demo mode
+current_environment = "TEST"  # Default to demo mode
 
 @app.get("/")
 def read_root():
@@ -427,8 +427,14 @@ def get_transactions(
 ):
     conn = get_db_connection()
     
-    # Exclude internal transfers from transaction list
-    real_query = "SELECT * FROM transactions WHERE environment = ? AND categoria != 'Transferencia'"
+    # Exclude internal transfers from transaction list UNLESS filtering by a specific bank
+    if bank:
+        # If filtering by bank, show everything (including transfers in/out of that bank)
+        real_query = "SELECT * FROM transactions WHERE environment = ?"
+    else:
+        # Global list: exclude transfers to avoid double-counting and clutter
+        real_query = "SELECT * FROM transactions WHERE environment = ? AND categoria != 'Transferencia'"
+    
     real_params = [environment]
     
     if start_date:
@@ -490,7 +496,14 @@ def get_bank_balances(environment: str = "PROD"):
 
 
 @app.get("/reports")
-def get_reports(start_date: str = None, end_date: str = None, category: str = None, environment: str = "PROD"):
+def get_reports(
+    start_date: str = None, 
+    end_date: str = None, 
+    category: str = None, 
+    bank: str = None,
+    detalle: str = None,
+    environment: str = "PROD"
+):
     conn = get_db_connection()
     
     # Base filter with environment
@@ -505,6 +518,12 @@ def get_reports(start_date: str = None, end_date: str = None, category: str = No
     if category:
         where_clause += " AND categoria = ?"
         params.append(category)
+    if bank:
+        where_clause += " AND banco = ?"
+        params.append(bank)
+    if detalle:
+        where_clause += " AND detalle LIKE ?"
+        params.append(f"%{detalle}%")
 
 
     # 1. Category Breakdown (Pie Chart) - ONLY Expenses, exclude transfers
@@ -550,7 +569,14 @@ def get_reports(start_date: str = None, end_date: str = None, category: str = No
 
 
 @app.get("/comparison")
-def get_period_comparison(start_date: str, end_date: str, environment: str = "PROD"):
+def get_period_comparison(
+    start_date: str, 
+    end_date: str, 
+    category: str = None,
+    bank: str = None,
+    detalle: str = None,
+    environment: str = "PROD"
+):
     """Compare current period with previous period of same length"""
     from datetime import datetime, timedelta
     
@@ -567,15 +593,28 @@ def get_period_comparison(start_date: str, end_date: str, environment: str = "PR
     cursor = conn.cursor()
     
     def get_period_totals(start, end):
-        query = '''
+        p_where = "environment = ? AND fecha >= ? AND fecha <= ?"
+        p_params = [environment, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")]
+        
+        if category:
+            p_where += " AND categoria = ?"
+            p_params.append(category)
+        if bank:
+            p_where += " AND banco = ?"
+            p_params.append(bank)
+        if detalle:
+            p_where += " AND detalle LIKE ?"
+            p_params.append(f"%{detalle}%")
+        
+        query = f'''
             SELECT 
                 COALESCE(SUM(ingreso), 0) as total_ingreso,
                 COALESCE(SUM(gasto), 0) as total_gasto,
                 COUNT(*) as num_transactions
             FROM transactions 
-            WHERE environment = ? AND fecha >= ? AND fecha <= ?
+            WHERE {p_where}
         '''
-        cursor.execute(sql_param(query), (environment, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")))
+        cursor.execute(sql_param(query), p_params)
         result = cursor.fetchone()
         return {
             "ingreso": result[0] or 0,
@@ -617,7 +656,14 @@ def get_period_comparison(start_date: str, end_date: str, environment: str = "PR
     }
 
 @app.get("/analysis")
-def get_analysis(start_date: str = None, end_date: str = None, category: str = None, environment: str = "PROD"):
+def get_analysis(
+    start_date: str = None, 
+    end_date: str = None, 
+    category: str = None, 
+    bank: str = None,
+    detalle: str = None,
+    environment: str = "PROD"
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -632,6 +678,12 @@ def get_analysis(start_date: str = None, end_date: str = None, category: str = N
     if category:
         where_clause += " AND categoria = ?"
         params.append(category)
+    if bank:
+        where_clause += " AND banco = ?"
+        params.append(bank)
+    if detalle:
+        where_clause += " AND detalle LIKE ?"
+        params.append(f"%{detalle}%")
         
     # 1. Top 10 Categorías de Gasto (exclude transfers)
     top_items_query = f'''
