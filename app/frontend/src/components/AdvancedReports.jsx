@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import DrillDownModal from './DrillDownModal';
 import { API_URL } from "../config";
+// force refresh mechanism
+
 
 const COLORS = ['#818cf8', '#34d399', '#f472b6', '#fbbf24', '#60a5fa', '#a78bfa', '#f87171'];
 const BARS_COLORS = ['#38bdf8', '#34d399', '#f472b6', '#fbbf24'];

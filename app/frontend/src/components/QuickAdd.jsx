@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { X, Save, TrendingUp, TrendingDown, Percent, Calculator } from 'lucide-react';
 import { API_URL } from "../config";
+// force refresh mechanism
+
 
 export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', environment = 'TEST' }) {
     if (!isOpen) return null;
