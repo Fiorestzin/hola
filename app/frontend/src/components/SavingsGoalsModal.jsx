@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Target, Trash2, Pencil, PiggyBank, Calendar, TrendingUp, Check, DollarSign, History, ArrowDown, ArrowUp, AlertTriangle } from 'lucide-react';
+import { X, Plus, Target, Trash2, Pencil, PiggyBank, Calendar, TrendingUp, TrendingDown, Check, DollarSign, History, ArrowDown, ArrowUp, AlertTriangle } from 'lucide-react';
 import { API_URL } from "../config";
 import GoalDetailsModal from './GoalDetailsModal';
 
@@ -30,6 +30,16 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         fecha_limite_reponer: ''
     });
     const [pendingWithdrawals, setPendingWithdrawals] = useState({});
+
+    // Execution state
+    const [executingGoal, setExecutingGoal] = useState(null);
+    const [executionData, setExecutionData] = useState({
+        monto: '',
+        banco: '',
+        categoria: '',
+        detalle: '',
+        fecha: new Date().toISOString().split('T')[0]
+    });
 
     // UI State
     const [goalBanks, setGoalBanks] = useState([]); // Banks with contributions to current goal
@@ -187,6 +197,52 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         }
     };
 
+    const handleExecuteGoal = async (goalId) => {
+        if (!executionData.monto || !executionData.banco || !executionData.categoria) {
+            alert("Por favor completa los campos obligatorios (monto, banco y categoría)");
+            return;
+        }
+
+        try {
+            // 1. Create the transaction
+            const txRes = await fetch(`${API_URL}/transaction`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fecha: executionData.fecha,
+                    tipo: 'Gasto',
+                    categoria: executionData.categoria,
+                    detalle: executionData.detalle || `Ejecución meta: ${executingGoal.nombre}`,
+                    banco: executionData.banco,
+                    monto: parseFloat(executionData.monto.toString().replace(/\D/g, '')),
+                    environment
+                })
+            });
+
+            if (!txRes.ok) {
+                const err = await txRes.json();
+                alert(err.detail || "Error al registrar el gasto");
+                return;
+            }
+
+            // 2. Complete the goal (which frees committed counts and deletes the goal)
+            const completeRes = await fetch(`${API_URL}/savings-goals/${goalId}/complete`, {
+                method: 'POST'
+            });
+
+            if (completeRes.ok) {
+                fetchGoals();
+                fetchPendingWithdrawals();
+                setExecutingGoal(null);
+                if (onGoalChange) onGoalChange();
+                alert('🎉 ¡Gasto registrado y meta finalizada!');
+            }
+        } catch (error) {
+            console.error("Error executing goal:", error);
+            alert("Error al procesar la ejecución de la meta");
+        }
+    };
+
     const resetForm = () => {
         setFormData({
             nombre: '',
@@ -200,6 +256,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         setContributingGoal(null);
         setContributionAmount('');
         setContributionBank('');
+        setExecutingGoal(null);
     };
 
     const handleCreateGoal = async (e) => {
@@ -512,8 +569,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                             <button
                                                 onClick={(e) => { e.stopPropagation(); setContributingGoal(contributingGoal === goal.id ? null : goal.id); setWithdrawingGoal(null); }}
                                                 className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${contributingGoal === goal.id
-                                                        ? 'bg-emerald-600 text-white'
-                                                        : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                                                    ? 'bg-emerald-600 text-white'
+                                                    : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
                                                     }`}
                                                 title="Aporte Rápido"
                                             >
@@ -527,13 +584,38 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                     setContributingGoal(null);
                                                 }}
                                                 className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${withdrawingGoal === goal.id
-                                                        ? 'bg-amber-600 text-white'
-                                                        : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                                                    ? 'bg-amber-600 text-white'
+                                                    : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
                                                     }`}
                                                 title="Retirar Fondos"
                                             >
                                                 <ArrowUp size={14} /> Retirar
                                             </button>
+
+                                            {goal.porcentaje >= 100 && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setExecutingGoal(executingGoal?.id === goal.id ? null : goal);
+                                                        setContributingGoal(null);
+                                                        setWithdrawingGoal(null);
+                                                        setExecutionData({
+                                                            monto: goal.monto_actual.toLocaleString('es-CL'),
+                                                            banco: '',
+                                                            categoria: '',
+                                                            detalle: `Compra: ${goal.nombre}`,
+                                                            fecha: new Date().toISOString().split('T')[0]
+                                                        });
+                                                    }}
+                                                    className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold shadow-sm ${executingGoal?.id === goal.id
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-emerald-600 text-white hover:bg-emerald-500 animate-pulse'
+                                                        }`}
+                                                    title="Efectuar Gasto"
+                                                >
+                                                    <Check size={14} /> Efectuar Gasto
+                                                </button>
+                                            )}
                                         </div>
 
                                         <div className="flex gap-1">
@@ -554,7 +636,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                     </div>
 
                                     {/* Inline Forms (Overlay) */}
-                                    {(contributingGoal === goal.id || withdrawingGoal === goal.id) && (
+                                    {(contributingGoal === goal.id || withdrawingGoal === goal.id || executingGoal?.id === goal.id) && (
                                         <div className="p-3 bg-slate-800 border-t border-slate-700 animate-in slide-in-from-top-2">
                                             {contributingGoal === goal.id && (
                                                 <div className="flex flex-col gap-2">
@@ -633,6 +715,82 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                             <Check size={14} />
                                                         </button>
                                                     </div>
+                                                </div>
+                                            )}
+
+                                            {executingGoal?.id === goal.id && (
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-2">
+                                                        <TrendingDown size={14} /> Ejecutar Gasto de Meta
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <div>
+                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Monto</label>
+                                                            <input
+                                                                type="text"
+                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:border-blue-500 outline-none"
+                                                                value={executionData.monto}
+                                                                onChange={(e) => setExecutionData({ ...executionData, monto: formatMonto(e.target.value) })}
+                                                            />
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Banco Origen</label>
+                                                            <select
+                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm outline-none"
+                                                                value={executionData.banco}
+                                                                onChange={(e) => setExecutionData({ ...executionData, banco: e.target.value })}
+                                                            >
+                                                                <option value="">Seleccionar...</option>
+                                                                {banks.map(b => (
+                                                                    <option key={b.id} value={b.nombre}>{b.nombre}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <div>
+                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Categoría</label>
+                                                            <select
+                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm outline-none"
+                                                                value={executionData.categoria}
+                                                                onChange={(e) => setExecutionData({ ...executionData, categoria: e.target.value })}
+                                                            >
+                                                                <option value="">Seleccionar...</option>
+                                                                {categories.map(c => (
+                                                                    <option key={c.id} value={c.nombre}>{c.nombre}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Fecha</label>
+                                                            <input
+                                                                type="date"
+                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-xs"
+                                                                value={executionData.fecha}
+                                                                onChange={(e) => setExecutionData({ ...executionData, fecha: e.target.value })}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Detalle</label>
+                                                        <input
+                                                            type="text"
+                                                            className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm"
+                                                            placeholder="Motivo del gasto"
+                                                            value={executionData.detalle}
+                                                            onChange={(e) => setExecutionData({ ...executionData, detalle: e.target.value })}
+                                                        />
+                                                    </div>
+
+                                                    <button
+                                                        onClick={() => handleExecuteGoal(goal.id)}
+                                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg font-bold flex items-center justify-center gap-2 transition-shadow shadow-lg shadow-blue-500/20"
+                                                    >
+                                                        Confirmar Gasto y Finalizar Meta
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>

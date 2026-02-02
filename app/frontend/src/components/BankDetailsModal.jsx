@@ -3,7 +3,7 @@ import { X, Calendar, TrendingUp, TrendingDown, Building2, Filter, ArrowUpDown, 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { API_URL } from "../config";
 
-export default function BankDetailsModal({ isOpen, onClose, bankName, environment = 'TEST' }) {
+export default function BankDetailsModal({ isOpen, onClose, bankName, environment = 'TEST', lastUpdated }) {
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [startDate, setStartDate] = useState('');
@@ -40,7 +40,7 @@ export default function BankDetailsModal({ isOpen, onClose, bankName, environmen
         if (isOpen && bankName) {
             fetchTransactions();
         }
-    }, [isOpen, bankName, startDate, endDate, environment]);
+    }, [isOpen, bankName, startDate, endDate, environment, lastUpdated]);
 
     useEffect(() => {
         // Always process, even if empty, to update totals/chart to 0

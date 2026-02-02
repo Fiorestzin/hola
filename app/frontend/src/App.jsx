@@ -18,6 +18,7 @@ function App() {
   const [transactions, setTransactions] = useState([]);
   const [banks, setBanks] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState(new Date());
   const [savingsSummary, setSavingsSummary] = useState({ total_ahorrado: 0, num_metas: 0 });
   const [savingsByBank, setSavingsByBank] = useState({}); // {banco: monto_aportado}
   const [pendingByBank, setPendingByBank] = useState({}); // {banco: monto_pendiente_reponer}
@@ -178,6 +179,7 @@ function App() {
       }
 
       setLoading(false);
+      setLastUpdated(new Date());
     } catch (error) {
       console.error("Error fetching data:", error);
       setLoading(false);
@@ -636,6 +638,7 @@ function App() {
         }}
         bankName={selectedBank}
         environment={APP_ENV}
+        lastUpdated={lastUpdated}
       />
     </div >
   );
