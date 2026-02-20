@@ -432,12 +432,13 @@ def get_transactions(
     # Exclude internal transfers from transaction list UNLESS:
     # - filtering by a specific bank or category
     # - explicitly requesting transfers via include_transfers=true
+    select_cols = "id, fecha, tipo, categoria, detalle, banco, cuenta, monto, ingreso, gasto, environment"
     if bank or category or include_transfers:
         # Show everything (including transfers)
-        real_query = "SELECT * FROM transactions WHERE environment = ?"
+        real_query = f"SELECT {select_cols} FROM transactions WHERE environment = ?"
     else:
         # Global list: exclude transfers to avoid double-counting and clutter
-        real_query = "SELECT * FROM transactions WHERE environment = ? AND categoria != 'Transferencia'"
+        real_query = f"SELECT {select_cols} FROM transactions WHERE environment = ? AND categoria != 'Transferencia'"
     
     real_params = [environment]
     
@@ -861,7 +862,7 @@ def update_transaction(tx_id: int, tx: TransactionUpdate):
     cursor = conn.cursor()
     
     # Check if transaction exists
-    cursor.execute(sql_param("SELECT * FROM transactions WHERE id = ?"), (tx_id,))
+    cursor.execute(sql_param("SELECT id, fecha, tipo, categoria, detalle, banco, cuenta, monto, ingreso, gasto, environment FROM transactions WHERE id = ?"), (tx_id,))
     row = cursor.fetchone()
     if not row:
         conn.close()
