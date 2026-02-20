@@ -12,7 +12,8 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
         monto: '',
         categoria: '',
         detalle: '',
-        banco: 'Efectivo' // Default
+        banco: 'Efectivo', // Default
+        cuenta: 'Principal'
     });
 
     // Net/Gross Calculator State
@@ -23,6 +24,7 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
     // Fetch categories on mount
     const [categories, setCategories] = useState([]);
     const [banks, setBanks] = useState([]);
+    const [accounts, setAccounts] = useState([]);
 
     useEffect(() => {
         if (isOpen) {
@@ -34,6 +36,11 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
             fetch(`${API_URL}/banks?environment=${environment}`)
                 .then(res => res.json())
                 .then(data => setBanks(data))
+                .catch(err => console.error(err));
+
+            fetch(`${API_URL}/accounts?environment=${environment}`)
+                .then(res => res.json())
+                .then(data => setAccounts(data))
                 .catch(err => console.error(err));
         }
     }, [isOpen, environment]);
@@ -65,9 +72,9 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        onSave({ ...formData, tipo: type });
+        await onSave({ ...formData, tipo: type });
         onClose();
     };
 
@@ -171,7 +178,7 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                         )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <label className="block text-sm text-slate-400 mb-1">Fecha</label>
                             <input
@@ -184,7 +191,7 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-slate-400 mb-1">Banco / Cuenta</label>
+                            <label className="block text-sm text-slate-400 mb-1">Banco / Inst.</label>
                             <select
                                 name="banco"
                                 className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
@@ -193,6 +200,19 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                             >
                                 {banks.map(b => (
                                     <option key={b.id} value={b.nombre}>{b.nombre}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1">Cuenta</label>
+                            <select
+                                name="cuenta"
+                                className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
+                                value={formData.cuenta}
+                                onChange={handleChange}
+                            >
+                                {accounts.map(a => (
+                                    <option key={a.id} value={a.nombre}>{a.nombre}</option>
                                 ))}
                             </select>
                         </div>

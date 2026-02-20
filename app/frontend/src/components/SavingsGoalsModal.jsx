@@ -1,13 +1,15 @@
-import { useState, useEffect } from 'react';
-import { X, Plus, Target, Trash2, Pencil, PiggyBank, Calendar, TrendingUp, TrendingDown, Check, DollarSign, History, ArrowDown, ArrowUp, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, Plus, Target, Trash2, Pencil, PiggyBank, Calendar, TrendingUp, TrendingDown, Check, DollarSign, History, ArrowDown, ArrowUp, AlertTriangle, Clock, StickyNote } from 'lucide-react';
 import { API_URL } from "../config";
 import GoalDetailsModal from './GoalDetailsModal';
+import { useSnackbar } from '../context/SnackbarContext';
 
 // Preset icons for goals
 const GOAL_ICONS = ['🎯', '✈️', '🏠', '🚗', '💻', '📚', '🎓', '💍', '🏖️', '💰', '🎸', '🏋️'];
 const GOAL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
 
 export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST", onGoalChange }) {
+    const { showSnackbar } = useSnackbar();
     const [goals, setGoals] = useState([]);
     const [banks, setBanks] = useState([]);
     const [categories, setCategories] = useState([]);
@@ -41,8 +43,13 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         fecha: new Date().toISOString().split('T')[0]
     });
 
+    // Notes state
+    const [notesGoal, setNotesGoal] = useState(null);
+    const [notesData, setNotesData] = useState('');
+
     // UI State
     const [goalBanks, setGoalBanks] = useState([]); // Banks with contributions to current goal
+    const [positiveBanks, setPositiveBanks] = useState([]); // Banks with positive balance for new contributions
     const [selectedGoal, setSelectedGoal] = useState(null); // For Detail Modal
 
     // Form state
@@ -50,6 +57,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         nombre: '',
         monto_objetivo: '',
         fecha_limite: '',
+        frecuencia_aporte: '',
+        dia_aporte: '',
         icono: '🎯',
         color: '#3b82f6'
     });
@@ -58,11 +67,49 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         if (isOpen) {
             fetchGoals();
             fetchBanks();
+            fetchPositiveBanks();
             fetchCategories();
             fetchPendingWithdrawals();
             resetForm();
         }
     }, [isOpen, environment]);
+
+    // Calculate suggested installment based on form data
+    const suggestedInstallment = useMemo(() => {
+        if (!formData.monto_objetivo || !formData.fecha_limite || !formData.frecuencia_aporte) return null;
+
+        const target = parseFloat(formData.monto_objetivo.toString().replace(/\D/g, ''));
+        if (isNaN(target)) return null;
+
+        const current = editingGoal ? editingGoal.monto_actual : 0;
+        const remaining = Math.max(0, target - current);
+        if (remaining === 0) return 0;
+
+        const today = new Date();
+        const deadline = new Date(formData.fecha_limite);
+        const diffTime = Math.abs(deadline - today);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        if (diffDays <= 0) return null;
+
+        let periods = 0;
+        switch (formData.frecuencia_aporte) {
+            case 'Diario':
+                periods = diffDays;
+                break;
+            case 'Semanal':
+                periods = diffDays / 7;
+                break;
+            case 'Mensual':
+                periods = diffDays / 30.44; // Average days in month
+                break;
+            default:
+                return null;
+        }
+
+        if (periods <= 0) return null;
+        return Math.ceil(remaining / periods);
+    }, [formData.monto_objetivo, formData.fecha_limite, formData.frecuencia_aporte, editingGoal]);
 
     const fetchGoals = async () => {
         setLoading(true);
@@ -71,6 +118,14 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             if (res.ok) {
                 const data = await res.json();
                 setGoals(data);
+
+                // If a goal is currently selected, update it with fresh data
+                if (selectedGoal) {
+                    const updatedSelected = data.find(g => g.id === selectedGoal.id);
+                    if (updatedSelected) {
+                        setSelectedGoal(updatedSelected);
+                    }
+                }
             }
         } catch (error) {
             console.error("Error loading goals:", error);
@@ -81,13 +136,25 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
 
     const fetchBanks = async () => {
         try {
-            const res = await fetch(`${API_URL}/banks?environment=${environment}`);
+            const res = await fetch(`${API_URL}/banks/with-balance?environment=${environment}`);
             if (res.ok) {
                 const data = await res.json();
                 setBanks(data);
             }
         } catch (error) {
             console.error("Error loading banks:", error);
+        }
+    };
+
+    const fetchPositiveBanks = async () => {
+        try {
+            const res = await fetch(`${API_URL}/banks/with-balance?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setPositiveBanks(data);
+            }
+        } catch (error) {
+            console.error("Error loading positive banks:", error);
         }
     };
 
@@ -248,6 +315,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             nombre: '',
             monto_objetivo: '',
             fecha_limite: '',
+            frecuencia_aporte: '',
+            dia_aporte: '',
             icono: '🎯',
             color: '#3b82f6'
         });
@@ -257,6 +326,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         setContributionAmount('');
         setContributionBank('');
         setExecutingGoal(null);
+        setNotesGoal(null);
+        setNotesData('');
     };
 
     const handleCreateGoal = async (e) => {
@@ -271,6 +342,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     ...formData,
                     monto_objetivo: parseFloat(formData.monto_objetivo.replace(/\D/g, '')),
                     fecha_limite: formData.fecha_limite,
+                    frecuencia_aporte: formData.frecuencia_aporte || null,
+                    dia_aporte: formData.dia_aporte ? parseInt(formData.dia_aporte) : null,
                     environment
                 })
             });
@@ -296,6 +369,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     nombre: formData.nombre,
                     monto_objetivo: parseFloat(formData.monto_objetivo.toString().replace(/\D/g, '')),
                     fecha_limite: formData.fecha_limite,
+                    frecuencia_aporte: formData.frecuencia_aporte || null,
+                    dia_aporte: formData.dia_aporte ? parseInt(formData.dia_aporte) : null,
                     icono: formData.icono,
                     color: formData.color
                 })
@@ -311,19 +386,45 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
     };
 
     const handleDeleteGoal = async (goalId) => {
-        if (!confirm('¿Seguro que quieres eliminar esta meta? Se perderá todo el historial de aportes.')) return;
+        const goalToDelete = goals.find(g => g.id === goalId);
+        if (!goalToDelete) return; // Should not happen
 
-        try {
-            const res = await fetch(`${API_URL}/savings-goals/${goalId}`, {
-                method: 'DELETE'
-            });
-            if (res.ok) {
+        // 1. Optimistic UI: Remove from list immediately
+        setGoals(prev => prev.filter(g => g.id !== goalId));
+
+        // 2. Set timer for actual deletion
+        const timerId = setTimeout(async () => {
+            try {
+                const res = await fetch(`${API_URL}/savings-goals/${goalId}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    if (onGoalChange) onGoalChange();
+                } else {
+                    // If failed, restore (could be handled better, but rare)
+                    fetchGoals();
+                }
+            } catch (error) {
+                console.error("Error deleting goal:", error);
                 fetchGoals();
-                if (onGoalChange) onGoalChange();
             }
-        } catch (error) {
-            console.error("Error deleting goal:", error);
-        }
+        }, 4000); // 4 seconds delay
+
+        // 3. Show Snackbar with Undo
+        showSnackbar(
+            `Meta "${goalToDelete.nombre}" eliminada`,
+            'info',
+            () => {
+                // UNDO ACTION: Clear timeout and restore UI
+                clearTimeout(timerId);
+                setGoals(prev => {
+                    const restored = [...prev, goalToDelete];
+                    // Optional: sort by created_at if possible, or just accept it's at end until refresh
+                    return restored;
+                });
+            },
+            4000
+        );
     };
 
     const handleContribute = async (goalId) => {
@@ -341,15 +442,67 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     banco: contributionBank || null
                 })
             });
+
             if (res.ok) {
-                fetchGoals();
+                // Success!
                 setContributingGoal(null);
                 setContributionAmount('');
                 setContributionBank('');
+                fetchGoals(); // Refresh UI with new balance
                 if (onGoalChange) onGoalChange();
+
+                // Show Undo Snackbar
+                showSnackbar(
+                    `Aporte de ${fmt(monto)} registrado`,
+                    'success',
+                    async () => {
+                        // UNDO Logic: Fetch latest contribution and delete it
+                        try {
+                            // 1. Fetch contributions
+                            const cRes = await fetch(`${API_URL}/savings-goals/${goalId}/contributions`);
+                            if (cRes.ok) {
+                                const cData = await cRes.json();
+                                if (cData.length > 0) {
+                                    // Assuming index 0 is latest (server sorts DESC)
+                                    const latest = cData[0];
+
+                                    // Safety check on amount
+                                    if (latest.monto === monto) {
+                                        await fetch(`${API_URL}/savings-contributions/${latest.id}`, { method: 'DELETE' });
+                                        fetchGoals(); // Revert UI
+                                        if (onGoalChange) onGoalChange();
+                                        showSnackbar("Aporte deshecho", "info");
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Error undoing contribution:", e);
+                        }
+                    }
+                );
             }
         } catch (error) {
             console.error("Error contributing:", error);
+        }
+    };
+
+    const handleSaveNotes = async (goalId) => {
+        try {
+            const res = await fetch(`${API_URL}/savings-goals/${goalId}/notas`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ notas: notesData })
+            });
+
+            if (res.ok) {
+                setNotesGoal(null);
+                fetchGoals();
+                showSnackbar('Notas actualizadas', 'success');
+            } else {
+                showSnackbar('Error al guardar notas', 'error');
+            }
+        } catch (error) {
+            console.error("Error saving notes:", error);
         }
     };
 
@@ -359,10 +512,90 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             nombre: goal.nombre,
             monto_objetivo: goal.monto_objetivo.toLocaleString('es-CL'),
             fecha_limite: goal.fecha_limite || '',
+            frecuencia_aporte: goal.frecuencia_aporte || '',
+            dia_aporte: goal.dia_aporte || '',
             icono: goal.icono,
             color: goal.color
         });
         setShowCreateForm(true);
+    };
+
+    // --- LOGIC: Calculate Smart Status & Next Quota ---
+    const calculateGoalStatus = (goal) => {
+        if (!goal.frecuencia_aporte || !goal.monto_objetivo || !goal.fecha_limite) {
+            return { status: 'none', nextQuota: null, nextDate: null };
+        }
+
+        // Logic copied/adapted from GoalDetailsModal to ensure consistency
+        const startDate = goal.created_at ? new Date(goal.created_at) : new Date();
+        startDate.setHours(0, 0, 0, 0);
+        const endDate = new Date(goal.fecha_limite + 'T00:00:00');
+
+        if (endDate <= startDate) return { status: 'none' }; // Invalid range or expired
+
+        // Generate ideal slots
+        const idealSlots = [];
+        let currentDate = new Date(startDate);
+
+        // Initial Advance
+        if (goal.frecuencia_aporte === 'Diario') currentDate.setDate(currentDate.getDate() + 1);
+        else if (goal.frecuencia_aporte === 'Semanal') {
+            const targetDay = parseInt(goal.dia_aporte) || currentDate.getDay() || 7;
+            let diff = targetDay - (currentDate.getDay() || 7);
+            if (diff <= 0) diff += 7;
+            currentDate.setDate(currentDate.getDate() + diff);
+        } else if (goal.frecuencia_aporte === 'Mensual') {
+            const targetDay = parseInt(goal.dia_aporte);
+            if (targetDay) {
+                if (currentDate.getDate() >= targetDay) currentDate.setMonth(currentDate.getMonth() + 1);
+                currentDate.setDate(targetDay);
+            } else {
+                currentDate.setMonth(currentDate.getMonth() + 1);
+            }
+        }
+
+        while (currentDate <= endDate) {
+            idealSlots.push(new Date(currentDate));
+            // Advance loop
+            if (goal.frecuencia_aporte === 'Diario') currentDate.setDate(currentDate.getDate() + 1);
+            else if (goal.frecuencia_aporte === 'Semanal') currentDate.setDate(currentDate.getDate() + 7);
+            else if (goal.frecuencia_aporte === 'Mensual') currentDate.setMonth(currentDate.getMonth() + 1);
+            else break;
+        }
+
+        if (idealSlots.length === 0) return { status: 'none' };
+
+        const quotaAmount = Math.ceil(goal.monto_objetivo / idealSlots.length);
+        let remainingSavings = goal.monto_actual;
+
+        // Find the first UNPAID or PARTIALLY PAID slot
+        for (let i = 0; i < idealSlots.length; i++) {
+            const slotDate = idealSlots[i];
+
+            if (remainingSavings >= quotaAmount) {
+                remainingSavings -= quotaAmount; // Fully paid, check next
+                continue;
+            }
+
+            // Found pending slot!
+            const remainingToPay = quotaAmount - remainingSavings;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            let status = 'pending'; // Default: It's coming up
+            if (slotDate < today) status = 'late'; // It's in the past!
+            else status = 'ontrack'; // It's in the future
+
+            return {
+                status,
+                nextQuota: remainingToPay,
+                nextDate: slotDate.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }),
+                fullDate: slotDate
+            };
+        }
+
+        // If loop finishes, all slots are covered!
+        return { status: 'completed', nextQuota: 0, nextDate: null };
     };
 
     const formatMonto = (value) => {
@@ -445,6 +678,74 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                 />
                             </div>
 
+                            {/* Frequency & Contribution Day */}
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Frecuencia de Aporte</label>
+                                <select
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 text-sm"
+                                    value={formData.frecuencia_aporte}
+                                    onChange={(e) => setFormData({ ...formData, frecuencia_aporte: e.target.value })}
+                                >
+                                    <option value="">Sin frecuencia definida</option>
+                                    <option value="Diario">Diario</option>
+                                    <option value="Semanal">Semanal</option>
+                                    <option value="Mensual">Mensual</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">
+                                    {formData.frecuencia_aporte === 'Semanal' ? 'Día de la semana' : 'Día del mes'}
+                                </label>
+                                {formData.frecuencia_aporte === 'Semanal' ? (
+                                    <select
+                                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 text-sm"
+                                        value={formData.dia_aporte}
+                                        onChange={(e) => setFormData({ ...formData, dia_aporte: e.target.value })}
+                                        disabled={!formData.frecuencia_aporte}
+                                    >
+                                        <option value="">Selecciona día</option>
+                                        <option value="1">Lunes</option>
+                                        <option value="2">Martes</option>
+                                        <option value="3">Miércoles</option>
+                                        <option value="4">Jueves</option>
+                                        <option value="5">Viernes</option>
+                                        <option value="6">Sábado</option>
+                                        <option value="7">Domingo</option>
+                                    </select>
+                                ) : (
+                                    <input
+                                        type="number"
+                                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                                        placeholder={formData.frecuencia_aporte === 'Mensual' ? "Ej: 5 (día 5 de cada mes)" : "Opcional"}
+                                        value={formData.dia_aporte}
+                                        onChange={(e) => setFormData({ ...formData, dia_aporte: e.target.value })}
+                                        min="1"
+                                        max="31"
+                                        disabled={!formData.frecuencia_aporte || formData.frecuencia_aporte === 'Diario'}
+                                    />
+                                )}
+                            </div>
+
+                            {/* Suggested Installment Display */}
+                            {suggestedInstallment !== null && suggestedInstallment > 0 && (
+                                <div className="col-span-1 md:col-span-2 bg-emerald-900/20 border border-emerald-500/30 rounded-lg p-3 flex items-center gap-3 animate-in fade-in">
+                                    <div className="bg-emerald-500/20 p-2 rounded-full text-emerald-400">
+                                        <DollarSign size={20} />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-emerald-400/80 uppercase font-bold">Cuota Sugerida ({formData.frecuencia_aporte})</p>
+                                        <p className="text-lg font-bold text-white shadow-emerald-500/50 drop-shadow-sm">
+                                            {fmt(suggestedInstallment)}
+                                        </p>
+                                        <p className="text-[10px] text-slate-400">
+                                            Para lograr la meta el {formData.fecha_limite}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+
+
                             {/* Icon & Color */}
                             <div className="flex gap-4">
                                 <div className="flex-1">
@@ -463,6 +764,16 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                 {icon}
                                             </button>
                                         ))}
+                                        <div className="relative group">
+                                            <input
+                                                type="text"
+                                                maxLength="2"
+                                                className="w-8 h-8 rounded bg-slate-800 border border-slate-600 text-center text-lg focus:border-emerald-500 focus:outline-none transition-all placeholder-slate-600"
+                                                placeholder="+"
+                                                onChange={(e) => e.target.value && setFormData({ ...formData, icono: e.target.value })}
+                                                value={GOAL_ICONS.includes(formData.icono) ? '' : formData.icono}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                                 <div>
@@ -514,311 +825,427 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                         </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-4">
-                            {goals.map(goal => (
-                                <div
-                                    key={goal.id}
-                                    className="bg-slate-900 rounded-xl border border-slate-700/50 hover:border-slate-500 transition-all shadow-lg overflow-hidden group relative flex flex-col"
-                                >
-                                    {/* Card Header (Clickable) */}
+                            {goals.map(goal => {
+                                // Calculate Status on the fly
+                                const { status, nextQuota, nextDate } = calculateGoalStatus(goal);
+
+                                return (
                                     <div
-                                        onClick={() => setSelectedGoal(goal)}
-                                        className="p-4 cursor-pointer hover:bg-slate-800/30 transition-colors flex-1"
+                                        key={goal.id}
+                                        className="bg-slate-900 rounded-xl border border-slate-700/50 hover:border-slate-500 transition-all shadow-lg overflow-hidden group relative flex flex-col"
                                     >
-                                        <div className="flex justify-between items-start mb-3">
-                                            <div className="flex items-center gap-3">
-                                                <span
-                                                    className="text-2xl w-12 h-12 rounded-xl flex items-center justify-center shadow-inner"
-                                                    style={{ backgroundColor: `${goal.color}15`, color: goal.color }}
-                                                >
-                                                    {goal.icono}
-                                                </span>
-                                                <div>
-                                                    <h3 className="font-bold text-white group-hover:text-emerald-400 transition-colors">{goal.nombre}</h3>
-                                                    <p className="text-xs text-slate-400">
-                                                        {goal.fecha_limite ? `Meta: ${goal.fecha_limite}` : 'Sin fecha límite'}
-                                                    </p>
+                                        {/* Card Header (Clickable) */}
+                                        <div
+                                            onClick={() => setSelectedGoal(goal)}
+                                            className="p-4 cursor-pointer hover:bg-slate-800/30 transition-colors flex-1"
+                                        >
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div className="flex items-center gap-3">
+                                                    <span
+                                                        className="text-2xl w-12 h-12 rounded-xl flex items-center justify-center shadow-inner"
+                                                        style={{ backgroundColor: `${goal.color}15`, color: goal.color }}
+                                                    >
+                                                        {goal.icono}
+                                                    </span>
+                                                    <div>
+                                                        <div className='flex items-center gap-2'>
+                                                            <h3 className="font-bold text-white group-hover:text-emerald-400 transition-colors">{goal.nombre}</h3>
+                                                            {status === 'late' && (
+                                                                <span className='text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded border border-red-500/30 flex items-center gap-1 font-bold animate-pulse'>
+                                                                    <Clock size={10} /> Atrasado
+                                                                </span>
+                                                            )}
+                                                            {status === 'ontrack' && (
+                                                                <span className='text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 flex items-center gap-1 font-bold'>
+                                                                    <Check size={10} /> Al día
+                                                                </span>
+                                                            )}
+                                                            {status === 'completed' && (
+                                                                <span className='text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 flex items-center gap-1 font-bold'>
+                                                                    <Check size={10} /> Completado
+                                                                </span>
+                                                            )}
+                                                        </div>
+
+                                                        <p className="text-xs text-slate-400 flex items-center gap-1 mt-0.5">
+                                                            {goal.fecha_limite ? (
+                                                                <>
+                                                                    <Calendar size={12} /> {goal.fecha_limite}
+                                                                </>
+                                                            ) : 'Sin fecha límite'}
+                                                            {goal.frecuencia_aporte && (
+                                                                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-slate-800 text-[10px] border border-slate-700 text-slate-300">
+                                                                    {goal.frecuencia_aporte}
+                                                                </span>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-lg font-bold text-white">{fmt(goal.monto_actual)}</p>
+                                                    <p className="text-xs text-slate-500">de {fmt(goal.monto_objetivo)}</p>
                                                 </div>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="text-lg font-bold text-white">{fmt(goal.monto_actual)}</p>
-                                                <p className="text-xs text-slate-500">de {fmt(goal.monto_objetivo)}</p>
+
+                                            {/* Progress Bar */}
+                                            <div className="mb-2 relative pt-2">
+                                                <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
+                                                    <span>{goal.porcentaje}%</span>
+                                                    <span>{fmt(Math.max(0, goal.monto_objetivo - goal.monto_actual))} falta</span>
+                                                </div>
+                                                <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                                                    <div
+                                                        className="h-full rounded-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(0,0,0,0.5)]"
+                                                        style={{
+                                                            width: `${Math.min(goal.porcentaje, 100)}%`,
+                                                            backgroundColor: goal.color
+                                                        }}
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
 
-                                        {/* Progress Bar */}
-                                        <div className="mb-2 relative pt-2">
-                                            <div className="flex justify-between text-[10px] text-slate-400 mb-1 font-mono">
-                                                <span>{goal.porcentaje}%</span>
-                                                <span>{fmt(Math.max(0, goal.monto_objetivo - goal.monto_actual))} falta</span>
-                                            </div>
-                                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
-                                                <div
-                                                    className="h-full rounded-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(0,0,0,0.5)]"
-                                                    style={{
-                                                        width: `${Math.min(goal.porcentaje, 100)}%`,
-                                                        backgroundColor: goal.color
-                                                    }}
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Quick Actions Footer */}
-                                    <div className="bg-slate-950/30 p-2 border-t border-slate-800 flex justify-between items-center gap-2">
-                                        <div className="flex gap-1">
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); setContributingGoal(contributingGoal === goal.id ? null : goal.id); setWithdrawingGoal(null); }}
-                                                className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${contributingGoal === goal.id
-                                                    ? 'bg-emerald-600 text-white'
-                                                    : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
-                                                    }`}
-                                                title="Aporte Rápido"
-                                            >
-                                                <Plus size={14} /> Aportar
-                                            </button>
-                                            <button
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    if (withdrawingGoal !== goal.id) fetchGoalBanks(goal.id);
-                                                    setWithdrawingGoal(withdrawingGoal === goal.id ? null : goal.id);
-                                                    setContributingGoal(null);
-                                                }}
-                                                className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${withdrawingGoal === goal.id
-                                                    ? 'bg-amber-600 text-white'
-                                                    : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
-                                                    }`}
-                                                title="Retirar Fondos"
-                                            >
-                                                <ArrowUp size={14} /> Retirar
-                                            </button>
-
-                                            {goal.porcentaje >= 100 && (
+                                        {/* Quick Actions Footer */}
+                                        <div className="bg-slate-950/30 p-2 border-t border-slate-800 flex justify-between items-center gap-2">
+                                            <div className="flex gap-1">
+                                                {/* SMART ACTION BUTTON */}
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        setExecutingGoal(executingGoal?.id === goal.id ? null : goal);
+                                                        setContributingGoal(contributingGoal === goal.id ? null : goal.id);
+                                                        setWithdrawingGoal(null);
+                                                        setExecutingGoal(null);
+                                                        setNotesGoal(null);
+                                                        if (nextQuota) {
+                                                            setContributionAmount(nextQuota.toLocaleString('es-CL'));
+                                                        }
+                                                    }}
+                                                    className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${contributingGoal === goal.id
+                                                        ? 'bg-emerald-600 text-white'
+                                                        : 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                                                        }`}
+                                                    title="Aporte Rápido"
+                                                >
+                                                    <Plus size={14} />
+                                                    {/* Smart Label Logic */}
+                                                    {(status === 'late') ? (
+                                                        <span className='font-bold underlinedecoration-wavy'>Pagar {fmt(nextQuota)}</span>
+                                                    ) : (status === 'ontrack' && nextDate) ? (
+                                                        <span>Aportar {fmt(nextQuota)}</span>
+                                                    ) : (
+                                                        <span>Aportar</span>
+                                                    )}
+                                                </button>
+
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (withdrawingGoal !== goal.id) fetchGoalBanks(goal.id);
+                                                        setWithdrawingGoal(withdrawingGoal === goal.id ? null : goal.id);
+                                                        setContributingGoal(null);
+                                                        setExecutingGoal(null);
+                                                        setNotesGoal(null);
+                                                    }}
+                                                    className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-medium ${withdrawingGoal === goal.id
+                                                        ? 'bg-amber-600 text-white'
+                                                        : 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20'
+                                                        }`}
+                                                    title="Retirar Fondos"
+                                                >
+                                                    <ArrowUp size={14} /> Retirar
+                                                </button>
+
+                                                {goal.porcentaje >= 100 && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setExecutingGoal(executingGoal?.id === goal.id ? null : goal);
+                                                            setContributingGoal(null);
+                                                            setWithdrawingGoal(null);
+                                                            setNotesGoal(null);
+                                                            setExecutionData({
+                                                                monto: goal.monto_actual.toLocaleString('es-CL'),
+                                                                banco: '',
+                                                                categoria: '',
+                                                                detalle: `Compra: ${goal.nombre}`,
+                                                                fecha: new Date().toISOString().split('T')[0]
+                                                            });
+                                                        }}
+                                                        className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold shadow-sm ${executingGoal?.id === goal.id
+                                                            ? 'bg-blue-600 text-white'
+                                                            : 'bg-emerald-600 text-white hover:bg-emerald-500 animate-pulse'
+                                                            }`}
+                                                        title="Efectuar Gasto"
+                                                    >
+                                                        <Check size={14} /> Efectuar Gasto
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="flex gap-1">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setNotesGoal(notesGoal === goal.id ? null : goal.id);
+                                                        setNotesData(goal.notas || '');
                                                         setContributingGoal(null);
                                                         setWithdrawingGoal(null);
-                                                        setExecutionData({
-                                                            monto: goal.monto_actual.toLocaleString('es-CL'),
-                                                            banco: '',
-                                                            categoria: '',
-                                                            detalle: `Compra: ${goal.nombre}`,
-                                                            fecha: new Date().toISOString().split('T')[0]
-                                                        });
+                                                        setExecutingGoal(null);
                                                     }}
-                                                    className={`p-1.5 rounded-lg transition-colors flex items-center gap-1 text-xs font-bold shadow-sm ${executingGoal?.id === goal.id
-                                                        ? 'bg-blue-600 text-white'
-                                                        : 'bg-emerald-600 text-white hover:bg-emerald-500 animate-pulse'
+                                                    className={`p-1.5 transition-colors ${notesGoal === goal.id || goal.notas
+                                                        ? 'text-yellow-400 hover:text-yellow-300'
+                                                        : 'text-slate-500 hover:text-yellow-400'
                                                         }`}
-                                                    title="Efectuar Gasto"
+                                                    title={goal.notas ? "Ver Notas" : "Añadir Nota"}
                                                 >
-                                                    <Check size={14} /> Efectuar Gasto
+                                                    <StickyNote size={14} />
                                                 </button>
-                                            )}
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); startEdit(goal); }}
+                                                    className="p-1.5 text-slate-500 hover:text-indigo-400 transition-colors"
+                                                    title="Editar"
+                                                >
+                                                    <Pencil size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleDeleteGoal(goal.id); }}
+                                                    className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
+                                                >
+                                                    <Trash2 size={14} />
+                                                </button>
+                                            </div>
                                         </div>
 
-                                        <div className="flex gap-1">
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); startEdit(goal); }}
-                                                className="p-1.5 text-slate-500 hover:text-indigo-400 transition-colors"
-                                                title="Editar"
-                                            >
-                                                <Pencil size={14} />
-                                            </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteGoal(goal.id); }}
-                                                className="p-1.5 text-slate-500 hover:text-rose-400 transition-colors"
-                                            >
-                                                <Trash2 size={14} />
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Inline Forms (Overlay) */}
-                                    {(contributingGoal === goal.id || withdrawingGoal === goal.id || executingGoal?.id === goal.id) && (
-                                        <div className="p-3 bg-slate-800 border-t border-slate-700 animate-in slide-in-from-top-2">
-                                            {contributingGoal === goal.id && (
-                                                <div className="flex flex-col gap-2">
-                                                    <div className="text-xs font-bold text-emerald-400 mb-1">Nuevo Aporte</div>
-                                                    <div className="flex gap-2">
-                                                        <input
-                                                            type="text"
+                                        {/* Inline Forms (Overlay) */}
+                                        {(contributingGoal === goal.id || withdrawingGoal === goal.id || executingGoal?.id === goal.id || notesGoal === goal.id) && (
+                                            <div className="p-3 bg-slate-800 border-t border-slate-700 animate-in slide-in-from-top-2">
+                                                {notesGoal === goal.id && (
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="text-xs font-bold text-yellow-400 mb-1 flex items-center gap-1">
+                                                            <StickyNote size={12} /> Notas de la Meta
+                                                        </div>
+                                                        <textarea
                                                             autoFocus
-                                                            className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm focus:border-emerald-500 outline-none"
-                                                            placeholder="$ Monto"
-                                                            value={contributionAmount}
-                                                            onChange={(e) => setContributionAmount(formatMonto(e.target.value))}
+                                                            className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-2 text-sm text-white focus:border-yellow-500 outline-none resize-none"
+                                                            placeholder="Ej: Para el dentista de los sábados..."
+                                                            rows={2}
+                                                            value={notesData}
+                                                            onChange={(e) => setNotesData(e.target.value)}
                                                         />
-                                                        <select
-                                                            className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs outline-none"
-                                                            value={contributionBank}
-                                                            onChange={(e) => setContributionBank(e.target.value)}
-                                                        >
-                                                            <option value="">Banco</option>
-                                                            {banks.map(b => (
-                                                                <option key={b.id} value={b.nombre}>{b.nombre}</option>
-                                                            ))}
-                                                        </select>
-                                                        <button
-                                                            onClick={() => handleContribute(goal.id)}
-                                                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 rounded"
-                                                        >
-                                                            <Check size={14} />
-                                                        </button>
+                                                        <div className="flex justify-end mt-1">
+                                                            <button
+                                                                onClick={() => handleSaveNotes(goal.id)}
+                                                                className="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1 rounded text-xs font-bold transition-colors shadow-sm"
+                                                            >
+                                                                Guardar Nota
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            )}
+                                                )}
 
-                                            {withdrawingGoal === goal.id && (
-                                                <div className="flex flex-col gap-2">
-                                                    <div className="text-xs font-bold text-amber-400 mb-1">Retirar Fondos</div>
-                                                    <input
-                                                        type="text"
-                                                        autoFocus
-                                                        className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm focus:border-amber-500 outline-none mb-2"
-                                                        placeholder="$ Monto"
-                                                        value={withdrawalData.monto}
-                                                        onChange={(e) => setWithdrawalData({ ...withdrawalData, monto: formatMonto(e.target.value) })}
-                                                    />
-                                                    <div className="flex gap-2 mb-2">
-                                                        <input
-                                                            type="text"
-                                                            className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
-                                                            placeholder="Motivo"
-                                                            value={withdrawalData.motivo}
-                                                            onChange={(e) => setWithdrawalData({ ...withdrawalData, motivo: e.target.value })}
-                                                        />
-                                                        <select
-                                                            className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs outline-none"
-                                                            value={withdrawalData.banco}
-                                                            onChange={(e) => setWithdrawalData({ ...withdrawalData, banco: e.target.value })}
-                                                        >
-                                                            <option value="">Origen *</option>
-                                                            {goalBanks.map(b => (
-                                                                <option key={b.banco} value={b.banco}>{b.banco} ({fmt(b.total)})</option>
-                                                            ))}
-                                                        </select>
-                                                    </div>
-                                                    <div className="flex gap-2 items-center">
-                                                        <span className="text-[10px] text-slate-400">Reponer:</span>
-                                                        <input
-                                                            type="date"
-                                                            className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-xs"
-                                                            value={withdrawalData.fecha_limite_reponer}
-                                                            onChange={(e) => setWithdrawalData({ ...withdrawalData, fecha_limite_reponer: e.target.value })}
-                                                        />
-                                                        <button
-                                                            onClick={() => handleWithdraw(goal.id)}
-                                                            className="bg-amber-600 hover:bg-amber-500 text-white px-3 rounded"
-                                                        >
-                                                            <Check size={14} />
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {executingGoal?.id === goal.id && (
-                                                <div className="flex flex-col gap-3">
-                                                    <div className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-2">
-                                                        <TrendingDown size={14} /> Ejecutar Gasto de Meta
-                                                    </div>
-
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        <div>
-                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Monto</label>
+                                                {contributingGoal === goal.id && (
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="text-xs font-bold text-emerald-400 mb-1 flex justify-between">
+                                                            <span>Nuevo Aporte</span>
+                                                            {status === 'late' && <span className='text-red-400 animate-pulse'>¡Cuota Atrasada!</span>}
+                                                        </div>
+                                                        <div className="flex gap-2">
                                                             <input
                                                                 type="text"
-                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm focus:border-blue-500 outline-none"
+                                                                className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
+                                                                placeholder="Monto"
+                                                                value={contributionAmount}
+                                                                onChange={(e) => setContributionAmount(formatMonto(e.target.value))}
+                                                                autoFocus
+                                                            />
+                                                            <select
+                                                                className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
+                                                                value={contributionBank}
+                                                                onChange={(e) => setContributionBank(e.target.value)}
+                                                            >
+                                                                <option value="">Selecciona Banco</option>
+                                                                {positiveBanks.map(b => (
+                                                                    <option key={b.id} value={b.nombre}>{b.nombre} ({fmt(b.saldo)})</option>
+                                                                ))}
+                                                            </select>
+                                                            <button
+                                                                onClick={() => handleContribute(goal.id)}
+                                                                className="bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-colors"
+                                                            >
+                                                                <Check size={16} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {withdrawingGoal === goal.id && (
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="text-xs font-bold text-amber-400 mb-1">Retirar Fondos de Meta (Préstamo)</div>
+
+                                                        {/* Step 1: Banco y Monto */}
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <select
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                value={withdrawalData.banco}
+                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, banco: e.target.value })}
+                                                            >
+                                                                <option value="">Origen...</option>
+                                                                {goalBanks.map(b => (
+                                                                    <option key={b.banco} value={b.banco}>{b.banco} ({fmt(b.total || 0)})</option>
+                                                                ))}
+                                                            </select>
+                                                            <input
+                                                                type="text"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                placeholder="Monto"
+                                                                value={withdrawalData.monto}
+                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, monto: formatMonto(e.target.value) })}
+                                                            />
+                                                        </div>
+
+                                                        {/* Step 2: Motivo y Fecha */}
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <input
+                                                                type="text"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                placeholder="Motivo (ej: Emergencia)"
+                                                                value={withdrawalData.motivo}
+                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, motivo: e.target.value })}
+                                                            />
+                                                            <input
+                                                                type="date"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                title="Fecha límite para reponer"
+                                                                value={withdrawalData.fecha_limite_reponer}
+                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, fecha_limite_reponer: e.target.value })}
+                                                            />
+                                                        </div>
+
+                                                        <button
+                                                            onClick={() => handleWithdraw(goal.id)}
+                                                            className="w-full bg-amber-600 hover:bg-amber-500 text-white py-1 rounded text-xs font-bold mt-1"
+                                                        >
+                                                            Confirmar Retiro
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {executingGoal?.id === goal.id && (
+                                                    <div className="flex flex-col gap-2">
+                                                        <div className="text-xs font-bold text-blue-400 mb-1">Finalizar Meta (Registrar Gasto)</div>
+
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <input
+                                                                type="text"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                placeholder="Monto Final"
                                                                 value={executionData.monto}
                                                                 onChange={(e) => setExecutionData({ ...executionData, monto: formatMonto(e.target.value) })}
                                                             />
+                                                            <input
+                                                                type="date"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                value={executionData.fecha}
+                                                                onChange={(e) => setExecutionData({ ...executionData, fecha: e.target.value })}
+                                                            />
                                                         </div>
-                                                        <div>
-                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Banco Origen</label>
+
+                                                        <div className="grid grid-cols-2 gap-2">
                                                             <select
-                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm outline-none"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
                                                                 value={executionData.banco}
                                                                 onChange={(e) => setExecutionData({ ...executionData, banco: e.target.value })}
                                                             >
-                                                                <option value="">Seleccionar...</option>
-                                                                {banks.map(b => (
+                                                                <option value="">Banco Pago...</option>
+                                                                {positiveBanks.map(b => (
                                                                     <option key={b.id} value={b.nombre}>{b.nombre}</option>
                                                                 ))}
                                                             </select>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        <div>
-                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Categoría</label>
                                                             <select
-                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm outline-none"
+                                                                className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
                                                                 value={executionData.categoria}
                                                                 onChange={(e) => setExecutionData({ ...executionData, categoria: e.target.value })}
                                                             >
-                                                                <option value="">Seleccionar...</option>
+                                                                <option value="">Categoría...</option>
                                                                 {categories.map(c => (
                                                                     <option key={c.id} value={c.nombre}>{c.nombre}</option>
                                                                 ))}
                                                             </select>
                                                         </div>
-                                                        <div>
-                                                            <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Fecha</label>
-                                                            <input
-                                                                type="date"
-                                                                className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-xs"
-                                                                value={executionData.fecha}
-                                                                onChange={(e) => setExecutionData({ ...executionData, fecha: e.target.value })}
-                                                            />
-                                                        </div>
-                                                    </div>
 
-                                                    <div>
-                                                        <label className="text-[10px] text-slate-500 uppercase font-bold px-1">Detalle</label>
                                                         <input
                                                             type="text"
-                                                            className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm"
-                                                            placeholder="Motivo del gasto"
+                                                            className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                            placeholder="Detalle (Opcional)"
                                                             value={executionData.detalle}
                                                             onChange={(e) => setExecutionData({ ...executionData, detalle: e.target.value })}
                                                         />
+
+                                                        <button
+                                                            onClick={() => handleExecuteGoal(goal.id)}
+                                                            className="w-full bg-blue-600 hover:bg-blue-500 text-white py-1 rounded text-xs font-bold mt-1"
+                                                        >
+                                                            Confirmar Gasto y Finalizar
+                                                        </button>
                                                     </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    )}
 
-                                                    <button
-                                                        onClick={() => handleExecuteGoal(goal.id)}
-                                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg font-bold flex items-center justify-center gap-2 transition-shadow shadow-lg shadow-blue-500/20"
-                                                    >
-                                                        Confirmar Gasto y Finalizar Meta
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* Pending Withdrawals Indicator */}
-                                    {pendingWithdrawals[goal.id] && pendingWithdrawals[goal.id].length > 0 && (
-                                        <div className="px-4 pb-2">
-                                            <div className="text-[10px] text-amber-400 flex items-center gap-1 bg-amber-900/20 px-2 py-1 rounded border border-amber-900/50">
-                                                <AlertTriangle size={10} />
-                                                {pendingWithdrawals[goal.id].length} pendientes de reponer
+                    {/* Pending Withdrawals (Debts) Section */}
+                    {Object.keys(pendingWithdrawals).length > 0 && (
+                        <div className="mt-6 border-t border-slate-700 pt-4">
+                            <h3 className="text-amber-400 font-bold mb-3 flex items-center gap-2">
+                                <AlertTriangle size={20} /> Retiros Pendientes de Reponer
+                            </h3>
+                            <div className="space-y-2">
+                                {Object.entries(pendingWithdrawals).map(([goalId, withdraws]) => {
+                                    const relatedGoal = goals.find(g => g.id === parseInt(goalId));
+                                    return withdraws.map(w => (
+                                        <div key={w.id} className="bg-slate-900/50 border border-amber-500/20 rounded-lg p-3 flex justify-between items-center">
+                                            <div>
+                                                <p className="text-white text-sm font-bold flex items-center gap-2">
+                                                    {relatedGoal?.icono} {relatedGoal?.nombre || 'Meta eliminada'}
+                                                    <span className="text-slate-500 font-normal text-xs">• {w.motivo}</span>
+                                                </p>
+                                                <p className="text-xs text-slate-400">
+                                                    Fecha límite: <span className="text-amber-400">{w.fecha_limite_reponer}</span>
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-amber-400 font-bold">{fmt(w.monto)}</span>
+                                                <button
+                                                    onClick={() => handleRepayWithdrawal(w.id)}
+                                                    className="bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded text-xs transition-colors"
+                                                >
+                                                    Reponer
+                                                </button>
                                             </div>
                                         </div>
-                                    )}
-                                </div>
-                            ))}
+                                    ));
+                                })}
+                            </div>
                         </div>
                     )}
                 </div>
-
-                {/* Sub-Modal: Detail View */}
-                <GoalDetailsModal
-                    isOpen={!!selectedGoal}
-                    onClose={() => setSelectedGoal(null)}
-                    goal={selectedGoal}
-                    environment={environment}
-                />
             </div>
+
+            {/* Goal Details Modal (Nested) */}
+            <GoalDetailsModal
+                isOpen={!!selectedGoal}
+                onClose={() => setSelectedGoal(null)}
+                goal={selectedGoal}
+                environment={environment}
+                onGoalUpdate={() => {
+                    fetchGoals();
+                    if (onGoalChange) onGoalChange();
+                }}
+            />
         </div>
     );
 }

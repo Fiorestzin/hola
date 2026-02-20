@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target, Pencil, Eye, EyeOff } from 'lucide-react';
+import { Wallet, TrendingUp, TrendingDown, ArrowRightLeft, Building2, Settings, PieChart as PieIcon, Clock, LogOut, Trash2, Shield, PiggyBank, Target, Pencil, Eye, EyeOff, User } from 'lucide-react';
+import { useSnackbar } from './context/SnackbarContext';
 import QuickAdd from './components/QuickAdd';
-import CategoriesManager from './components/CategoriesManager';
-import BanksManager from './components/BanksManager';
 import BudgetManager from './components/BudgetManager';
 import AdvancedReports from './components/AdvancedReports';
-import SettingsPanel from './components/SettingsPanel';
 import TransferModal from './components/TransferModal';
 import SavingsGoalsModal from './components/SavingsGoalsModal';
+import SavingsMigratorModal from './components/SavingsMigratorModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import BankDetailsModal from './components/BankDetailsModal';
+import ControlCenterModal from './components/ControlCenterModal'; // Consolidated Settings
 import Login from "./components/Login";
 import { API_URL, APP_ENV } from "./config";
 
@@ -32,15 +32,16 @@ function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('Gasto'); // 'Ingreso' or 'Gasto'
 
-  // Categories State
-  const [isCatsOpen, setIsCatsOpen] = useState(false);
-  const [isBanksOpen, setIsBanksOpen] = useState(false);
+
+  // Categories & Banks State (Now handled inside Control Center, but we might keep specific open states if needed for shortcuts, lets remove them for now to strictly follow plan)
+  // const [isCatsOpen, setIsCatsOpen] = useState(false); // REMOVED
+  // const [isBanksOpen, setIsBanksOpen] = useState(false); // REMOVED
 
   // Reports State
   const [isReportsOpen, setIsReportsOpen] = useState(false);
 
-  // Settings State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  // Settings State (Unified Control Center)
+  const [isControlCenterOpen, setIsControlCenterOpen] = useState(false);
 
   // Transfer State
   const [isTransferOpen, setIsTransferOpen] = useState(false);
@@ -58,6 +59,11 @@ function App() {
   // Bank Details State
   const [isBankDetailsOpen, setIsBankDetailsOpen] = useState(false);
   const [selectedBank, setSelectedBank] = useState(null);
+  const [expandedBanks, setExpandedBanks] = useState([]);
+
+  // Savings Migrator State
+  const [isMigratorOpen, setIsMigratorOpen] = useState(false);
+  const [migratorSourceBank, setMigratorSourceBank] = useState(null);
 
   // Privacy Mode State
   const [isPrivacyMode, setIsPrivacyMode] = useState(() => {
@@ -68,6 +74,15 @@ function App() {
     const saved = localStorage.getItem('hidden_banks');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Time Zone State
+  const [timeZone, setTimeZone] = useState(() => {
+    return localStorage.getItem('timeZone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('timeZone', timeZone);
+  }, [timeZone]);
 
   // Perspective consistency: whenever state changes, save to localStorage
   useEffect(() => {
@@ -85,6 +100,15 @@ function App() {
     setHiddenBanks(prev =>
       prev.includes(bankName)
         ? prev.filter(name => name !== bankName)
+        : [...prev, bankName]
+    );
+  };
+
+  const toggleBankExpand = (e, bankName) => {
+    e.stopPropagation();
+    setExpandedBanks(prev =>
+      prev.includes(bankName)
+        ? prev.filter(b => b !== bankName)
         : [...prev, bankName]
     );
   };
@@ -143,8 +167,22 @@ function App() {
       setTransactions(txData);
 
       const bankRes = await fetch(`${API_URL}/summary/banks?environment=${APP_ENV}`);
-      const bankData = await bankRes.json();
-      setBanks(bankData);
+      const bankDataRaw = await bankRes.json();
+
+      const bankMap = new Map();
+      bankDataRaw.forEach(item => {
+        const bName = item.banco || "Sin Banco";
+        if (!bankMap.has(bName)) {
+          bankMap.set(bName, { banco: bName, saldo: 0, accounts: [] });
+        }
+        const b = bankMap.get(bName);
+        b.saldo += item.saldo;
+        b.accounts.push({
+          cuenta: item.cuenta || 'Principal',
+          saldo: item.saldo
+        });
+      });
+      setBanks(Array.from(bankMap.values()).sort((a, b) => b.saldo - a.saldo));
 
       // Fetch savings summary for committed balance display
       try {
@@ -212,9 +250,11 @@ function App() {
     setIsModalOpen(true);
   };
 
+  // --- Undo Logic for Transactions ---
+  const { showSnackbar } = useSnackbar();
+
   const handleSaveTransaction = async (data) => {
     try {
-      // Inject current environment into the transaction data
       const payload = { ...data, environment: APP_ENV };
 
       const res = await fetch(`${API_URL}/transaction`, {
@@ -224,13 +264,65 @@ function App() {
       });
 
       if (res.ok) {
+        const newTx = await res.json();
         // Refresh data
         fetchData();
-        // Optional: Show toast success
+
+        // Show Snackbar with Undo
+        showSnackbar(
+          `${newTx.tipo} registrado`,
+          'success',
+          async () => {
+            // UNDO: Delete the created transaction
+            try {
+              await fetch(`${API_URL}/transaction/${newTx.id}`, { method: 'DELETE' });
+              fetchData(); // Revert UI
+              showSnackbar("Movimiento deshecho", "info");
+            } catch (e) {
+              console.error("Error undoing transaction:", e);
+            }
+          }
+        );
       }
     } catch (error) {
       console.error("Error saving:", error);
     }
+  };
+
+  const handleRequestDelete = (txId) => {
+    const txToDelete = transactions.find(t => t.id === txId);
+    if (!txToDelete) return;
+
+    // 1. Optimistic UI: Remove immediately
+    setTransactions(prev => prev.filter(t => t.id !== txId));
+
+    // 2. Set Timer
+    const timerId = setTimeout(async () => {
+      try {
+        await fetch(`${API_URL}/transaction/${txId}`, { method: 'DELETE' });
+        // confirm delete (silent) or refresh total balance if needed
+        fetchData();
+      } catch (error) {
+        console.error("Error deleting transaction:", error);
+        fetchData(); // Restore if error
+      }
+    }, 4000);
+
+    // 3. Show Snackbar
+    showSnackbar(
+      "Movimiento eliminado",
+      "info",
+      () => {
+        // UNDO
+        clearTimeout(timerId);
+        setTransactions(prev => {
+          const restored = [...prev, txToDelete];
+          // Simple sort by ID/date might be needed, but appending is fine for immediate feedback
+          return restored.sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); // sort date desc
+        });
+      },
+      4000
+    );
   };
 
   // Format currency
@@ -301,27 +393,19 @@ function App() {
               >
                 <PieIcon size={20} />
               </button>
+
+              {/* Consolidated Settings Button */}
               <button
-                onClick={() => setIsCatsOpen(true)}
-                className="bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors text-slate-300 hover:text-white"
-                title="Categorías"
+                onClick={() => setIsControlCenterOpen(true)}
+                className="bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors text-slate-300 hover:text-white flex items-center gap-2"
+                title="Centro de Control (Ajustes)"
               >
-                <Settings size={20} />
+                <div className="bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full p-1">
+                  <User size={16} className="text-white" />
+                </div>
+                {/* <span className="hidden md:inline font-medium">Ajustes</span> */}
               </button>
-              <button
-                onClick={() => setIsBanksOpen(true)}
-                className="bg-slate-700/50 hover:bg-slate-700 p-3 rounded-xl transition-colors text-slate-300 hover:text-white"
-                title="Gestionar Bancos"
-              >
-                <Building2 size={20} />
-              </button>
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="bg-amber-900/50 hover:bg-amber-800 p-3 rounded-xl transition-colors text-amber-300 hover:text-white"
-                title="Configuración de Seguridad"
-              >
-                <Shield size={20} />
-              </button>
+
               <button
                 onClick={handleLogout}
                 className="bg-red-900/50 hover:bg-red-800 p-3 rounded-xl transition-colors text-red-300 hover:text-white"
@@ -377,11 +461,58 @@ function App() {
                       {formatPrivacy(bank.saldo, bankName)}
                     </p>
                   </div>
+
+                  {/* Cuentas Desglose */}
+                  {bank.accounts && (
+                    <div className="mt-3">
+                      {bank.accounts.length > 1 ? (
+                        <>
+                          <button
+                            onClick={(e) => toggleBankExpand(e, bankName)}
+                            className="flex items-center justify-between w-full text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-2 py-1.5 rounded-lg font-medium"
+                          >
+                            <span>{expandedBanks.includes(bankName) ? 'Ocultar cuentas' : `Ver ${bank.accounts.length} cuentas`}</span>
+                          </button>
+                          {expandedBanks.includes(bankName) && (
+                            <div className="mt-2 space-y-1.5 animate-in slide-in-from-top-2 fade-in duration-200">
+                              {bank.accounts.map((acc, aIdx) => (
+                                <div key={aIdx} className="flex justify-between items-center text-xs bg-slate-900/40 p-1.5 rounded-md border border-slate-700/50">
+                                  <span className="text-slate-400 truncate w-2/3" title={acc.cuenta}>{acc.cuenta}</span>
+                                  <span className={`font-medium ${acc.saldo < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                                    {formatPrivacy(acc.saldo, bankName)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        bank.accounts[0].cuenta !== 'Principal' && (
+                          <div className="flex justify-between items-center text-[10px] bg-slate-900/40 px-2 py-1 rounded border border-slate-700/50">
+                            <span className="text-slate-500 font-mono truncate">{bank.accounts[0].cuenta}</span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  )}
                   {aportadoDesdeBanco > 0 && (
                     <div className="mt-2 pt-2 border-t border-slate-700/50">
-                      <div className="flex justify-between text-xs">
+                      <div className="flex justify-between items-center text-xs">
                         <span className="text-amber-400/70">🐷 Comprometido:</span>
-                        <span className="text-amber-300">{formatPrivacy(aportadoDesdeBanco, bankName)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-300">{formatPrivacy(aportadoDesdeBanco, bankName)}</span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setMigratorSourceBank(bankName);
+                              setIsMigratorOpen(true);
+                            }}
+                            className="p-1 rounded-md hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-300 transition-all"
+                            title={`Migrar ahorros de ${bankName}`}
+                          >
+                            <ArrowRightLeft size={12} />
+                          </button>
+                        </div>
                       </div>
                       <div className="flex justify-between text-sm mt-1">
                         <span className="text-slate-400">Disponible:</span>
@@ -452,7 +583,14 @@ function App() {
                   {transactions.map((tx) => (
                     <tr key={tx.id} className="border-b border-slate-700/30 hover:bg-slate-700/40 transition-colors group">
                       <td className="py-3 pl-2 text-slate-300 font-mono text-xs">{tx.fecha}</td>
-                      <td className="py-3 font-medium text-slate-200 group-hover:text-white">{tx.detalle || "Sin detalle"}</td>
+                      <td className="py-3 font-medium text-slate-200 group-hover:text-white">
+                        {tx.detalle || "Sin detalle"}
+                        {tx.banco && (
+                          <div className="text-[10px] text-slate-500 font-normal mt-0.5 flex items-center gap-1">
+                            <Building2 size={10} /> {tx.banco} {tx.cuenta && tx.cuenta !== 'Principal' ? `(${tx.cuenta})` : ''}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 text-slate-500 hidden md:table-cell">
                         <span className="bg-slate-700/50 px-2 py-1 rounded text-xs">
                           {tx.categoria}
@@ -562,35 +700,28 @@ function App() {
         environment={APP_ENV}
       />
 
-      {/* Categories Manager */}
-      < CategoriesManager
-        isOpen={isCatsOpen}
-        onClose={() => setIsCatsOpen(false)}
-        environment={APP_ENV}
+      {/* Unified Control Center */}
+      <ControlCenterModal
+        isOpen={isControlCenterOpen}
+        onClose={() => {
+          setIsControlCenterOpen(false);
+          fetchData(); // Refresh data on close (covers banks/cats changes)
+        }}
+        timeZone={timeZone}
+        setTimeZone={setTimeZone}
+        token={token}
         onCategoryChange={() => fetchData()}
       />
 
-      {/* Banks Manager */}
-      <BanksManager
-        isOpen={isBanksOpen}
-        onClose={() => setIsBanksOpen(false)}
-        environment={APP_ENV}
-      />
-
-      {/* Advanced Reports */}
+      {/* Advanced Reports Modal */}
       <AdvancedReports
         isOpen={isReportsOpen}
         onClose={() => setIsReportsOpen(false)}
-        totalNetWorth={saldoDisponible}
+        totalNetWorth={totalSaldo}
         environment={APP_ENV}
       />
 
-      {/* Settings Panel */}
-      <SettingsPanel
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        token={token}
-      />
+      {/* Legacy Modals Removed/Replaced (CategoriesManager, BanksManager, SettingsPanel, SettingsModal) */}
 
       {/* Transfer Modal */}
       <TransferModal
@@ -625,7 +756,7 @@ function App() {
         transaction={selectedTransaction}
         environment={APP_ENV}
         onUpdate={() => fetchData()}
-        onDelete={() => fetchData()}
+        onDelete={handleRequestDelete}
         token={token}
       />
 
@@ -639,6 +770,18 @@ function App() {
         bankName={selectedBank}
         environment={APP_ENV}
         lastUpdated={lastUpdated}
+      />
+
+      {/* Savings Migrator Modal */}
+      <SavingsMigratorModal
+        isOpen={isMigratorOpen}
+        onClose={() => {
+          setIsMigratorOpen(false);
+          setMigratorSourceBank(null);
+        }}
+        environment={APP_ENV}
+        sourceBank={migratorSourceBank}
+        onComplete={() => fetchData()}
       />
     </div >
   );

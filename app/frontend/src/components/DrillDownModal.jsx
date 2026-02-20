@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Download, TrendingUp, ArrowDownUp, Search, Filter } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-export default function DrillDownModal({ isOpen, onClose, title, transactions, evolutionData = [] }) {
+export default function DrillDownModal({ isOpen, onClose, title, transactions, evolutionData = [], onEditTransaction }) {
     const [sortConfig, setSortConfig] = useState({ key: 'fecha', direction: 'desc' });
     const [filterDetail, setFilterDetail] = useState('');
     const [filterMinAmount, setFilterMinAmount] = useState('');
@@ -243,14 +243,19 @@ export default function DrillDownModal({ isOpen, onClose, title, transactions, e
                             </thead>
                             <tbody className="divide-y divide-slate-700/50">
                                 {sortedTx.map((tx, idx) => (
-                                    <tr key={tx.id || idx} className="hover:bg-slate-700/30 transition-colors">
-                                        <td className="p-4 font-mono text-slate-300">{tx.fecha}</td>
+                                    <tr
+                                        key={tx.id || idx}
+                                        className="hover:bg-slate-700/50 transition-colors cursor-pointer group"
+                                        onClick={() => onEditTransaction && onEditTransaction(tx)}
+                                        title="Clic para editar"
+                                    >
+                                        <td className="p-4 font-mono text-slate-300 group-hover:text-white">{tx.fecha}</td>
                                         <td className="p-4 text-slate-200">
-                                            <div className="font-medium">{tx.detalle || 'Sin detalle'}</div>
+                                            <div className="font-medium group-hover:text-blue-300 transition-colors">{tx.detalle || 'Sin detalle'}</div>
                                             <div className="text-xs text-slate-500">{tx.banco}</div>
                                         </td>
                                         <td className="p-4 text-slate-400">
-                                            <span className="bg-slate-700/50 px-2 py-1 rounded text-xs border border-slate-600">
+                                            <span className="bg-slate-700/50 px-2 py-1 rounded text-xs border border-slate-600 group-hover:border-slate-500">
                                                 {tx.categoria}
                                             </span>
                                         </td>

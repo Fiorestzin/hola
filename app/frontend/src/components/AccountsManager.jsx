@@ -1,57 +1,57 @@
 import { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Building2 } from 'lucide-react';
+import { X, Plus, Trash2, FileText } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function BanksManager({ isOpen, onClose, environment = "TEST", embedded = false }) {
-    const [banks, setBanks] = useState([]);
-    const [newBank, setNewBank] = useState('');
+export default function AccountsManager({ isOpen, onClose, environment = "TEST", embedded = false }) {
+    const [accounts, setAccounts] = useState([]);
+    const [newAccount, setNewAccount] = useState('');
 
     useEffect(() => {
-        if (isOpen || embedded) fetchBanks();
+        if (isOpen || embedded) fetchAccounts();
     }, [isOpen, environment, embedded]);
 
-    const fetchBanks = async () => {
+    const fetchAccounts = async () => {
         try {
-            const res = await fetch(`${API_URL}/banks?environment=${environment}`);
+            const res = await fetch(`${API_URL}/accounts?environment=${environment}`);
             if (res.ok) {
                 const data = await res.json();
-                setBanks(data);
+                setAccounts(data);
             }
         } catch (error) {
-            console.error("Error loading banks:", error);
+            console.error("Error loading accounts:", error);
         }
     };
 
     const handleAdd = async (e) => {
         e.preventDefault();
-        if (!newBank.trim()) return;
+        if (!newAccount.trim()) return;
 
         try {
-            const res = await fetch(`${API_URL}/banks`, {
+            const res = await fetch(`${API_URL}/accounts`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nombre: newBank, environment })
+                body: JSON.stringify({ nombre: newAccount, environment })
             });
             if (res.ok) {
-                setNewBank('');
-                fetchBanks();
+                setNewAccount('');
+                fetchAccounts();
             }
         } catch (error) {
-            console.error("Error adding bank:", error);
+            console.error("Error adding account:", error);
         }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('¿Seguro que quieres eliminar este banco/medio de pago?')) return;
+        if (!confirm('¿Seguro que quieres eliminar este tipo de cuenta?')) return;
         try {
-            const res = await fetch(`${API_URL}/banks/${id}`, {
+            const res = await fetch(`${API_URL}/accounts/${id}`, {
                 method: 'DELETE'
             });
             if (res.ok) {
-                fetchBanks();
+                fetchAccounts();
             }
         } catch (error) {
-            console.error("Error deleting bank:", error);
+            console.error("Error deleting account:", error);
         }
     };
 
@@ -62,8 +62,8 @@ export default function BanksManager({ isOpen, onClose, environment = "TEST", em
 
             {/* Header */}
             <div className={`p-4 flex justify-between items-center border-b border-slate-700 ${embedded ? '' : 'bg-slate-700/50'}`}>
-                <h2 className="font-bold text-xl flex items-center gap-2 text-cyan-400">
-                    <Building2 size={20} /> Gestionar Bancos
+                <h2 className="font-bold text-xl flex items-center gap-2 text-blue-400">
+                    <FileText size={20} /> Gestionar Cuentas
                 </h2>
                 {!embedded && (
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
@@ -74,35 +74,35 @@ export default function BanksManager({ isOpen, onClose, environment = "TEST", em
 
             {/* List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                {banks.map((bank) => (
-                    <div key={bank.id} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors">
+                {accounts.map((account) => (
+                    <div key={account.id} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors">
                         <div className="flex items-center gap-3">
-                            <Building2 size={16} className="text-cyan-400" />
-                            <span className="text-slate-200">{bank.nombre}</span>
+                            <FileText size={16} className="text-blue-400" />
+                            <span className="text-slate-200">{account.nombre}</span>
                         </div>
                         <button
-                            onClick={() => handleDelete(bank.id)}
+                            onClick={() => handleDelete(account.id)}
                             className="text-slate-500 hover:text-rose-400 p-2 transition-colors"
                         >
                             <Trash2 size={16} />
                         </button>
                     </div>
                 ))}
-                {banks.length === 0 && <p className="text-center text-slate-500 py-4">No hay bancos registrados.</p>}
+                {accounts.length === 0 && <p className="text-center text-slate-500 py-4">No hay cuentas registradas.</p>}
             </div>
 
             {/* Add Form */}
             <form onSubmit={handleAdd} className="p-4 bg-slate-700/30 border-t border-slate-700 flex gap-2">
                 <input
                     type="text"
-                    className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-                    placeholder="Nuevo banco o medio de pago..."
-                    value={newBank}
-                    onChange={(e) => setNewBank(e.target.value)}
+                    className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="Nuevo nombre de cuenta..."
+                    value={newAccount}
+                    onChange={(e) => setNewAccount(e.target.value)}
                 />
                 <button
                     type="submit"
-                    className="bg-cyan-600 hover:bg-cyan-500 text-white p-2 rounded-lg transition-colors"
+                    className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-colors"
                 >
                     <Plus size={20} />
                 </button>

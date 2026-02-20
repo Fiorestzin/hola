@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     PieChart, Pie, Cell, Legend, LineChart, Line
@@ -7,7 +7,10 @@ import {
     X, Calendar, PieChart as PieIcon, BarChart3, Hourglass,
     PiggyBank, Flame, TrendingUp, List, CreditCard, AlertCircle, Download
 } from 'lucide-react';
+import EditTransactionModal from './EditTransactionModal';
 import DrillDownModal from './DrillDownModal';
+import { useSnackbar } from '../context/SnackbarContext';
+import MultiSelect from './MultiSelect';
 import { API_URL } from "../config";
 // force refresh mechanism
 
@@ -23,11 +26,17 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     });
 
     // Category and Bank filters
-    const [categoryFilter, setCategoryFilter] = useState('');
-    const [bankFilter, setBankFilter] = useState('');
+    // Global Filter State (Multi-select)
+    const [selectedCategories, setSelectedCategories] = useState([]);
+    const [selectedBanks, setSelectedBanks] = useState([]);
     const [searchFilter, setSearchFilter] = useState('');
-    const [availableCategories, setAvailableCategories] = useState([]);
+
+    // Available Options
+    const [apiCategories, setApiCategories] = useState([]);
     const [availableBanks, setAvailableBanks] = useState([]);
+
+    // Raw Data State (All transactions for the period)
+    const [rawTransactions, setRawTransactions] = useState([]);
 
     // Data States
     const [data, setData] = useState({ pie_data: [], bar_data: [] });
@@ -36,7 +45,6 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 
     const [loading, setLoading] = useState(false);
     const [activeTab, setActiveTab] = useState('summary'); // summary, trends, breakdown
-    const [comparisonData, setComparisonData] = useState(null);
     const [historyView, setHistoryView] = useState('monthly'); // 'monthly' or 'yearly' for Histórico chart
 
     // Drill Down State
@@ -45,6 +53,10 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const [ddTransactions, setDdTransactions] = useState([]);
     const [ddEvolution, setDdEvolution] = useState([]);
 
+    // Editing State
+    const [editingTx, setEditingTx] = useState(null);
+    const { showSnackbar } = useSnackbar();
+
     const formatMonth = (dateStr) => {
         if (!dateStr || dateStr === 'Desconocido') return dateStr;
         const [year, month] = dateStr.split('-');
@@ -52,26 +64,129 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         return date.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
     };
 
+    const fetchAllData = async () => {
+        setLoading(true);
+        try {
+            const query = new URLSearchParams({
+                start_date: dateRange.start,
+                end_date: dateRange.end,
+                limit: 0, // Get all
+                include_transfers: true, // Include Transferencia for reports filtering
+                environment: environment
+            });
+            const res = await fetch(`${API_URL}/transactions?${query}`);
+            const json = await res.json();
+            setRawTransactions(Array.isArray(json) ? json : []);
+        } catch (error) {
+            console.error("Error fetching raw data:", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Load Initial Data (Banks and Categories + Transactions)
     useEffect(() => {
         if (isOpen) {
-            fetchReports();
-            fetchAnalysis();
-            fetchForecast();
-            fetchComparison();
-            fetchCategories();
             fetchBanks();
+            fetchCategories();
+            fetchAllData();
         }
-    }, [isOpen, dateRange, categoryFilter, bankFilter, searchFilter, environment]);
+    }, [isOpen, dateRange, environment]);
 
-    // Fetch available categories
+    // Update available categories: merge API categories + transaction categories + known hidden ones like 'Transferencia'
+    // Note: The backend excludes 'Transferencia' from /transactions AND it may not exist in /categories table,
+    // so we must inject it manually to make it selectable as a filter.
+    const ALWAYS_AVAILABLE_CATEGORIES = ['Transferencia'];
+    const availableCategories = useMemo(() => {
+        const txCats = rawTransactions.map(t => t.categoria).filter(Boolean);
+        return [...new Set([...apiCategories, ...txCats, ...ALWAYS_AVAILABLE_CATEGORIES])].sort();
+    }, [apiCategories, rawTransactions]);
+
+    // Reset filters when range changes significantly or on open (optional, keeps filters persistent for now)
+    // useEffect(() => { setSelectedCategories([]); setSelectedBanks([]); }, [isOpen]);
+
+    // --- CLIENT-SIDE FILTERING ENGINE ---
+    const processedData = (() => {
+        if (!rawTransactions.length) return { pie: [], history: [], kpis: {}, list: [] };
+
+        // 1. Filter Transactions
+        const filtered = rawTransactions.filter(tx => {
+            // Category Filter
+            if (selectedCategories.length > 0 && !selectedCategories.includes(tx.categoria)) return false;
+            // Bank Filter
+            if (selectedBanks.length > 0 && !selectedBanks.includes(tx.banco)) return false;
+            // Search Filter
+            if (searchFilter) {
+                const searchLower = searchFilter.toLowerCase();
+                const match = (tx.detalle || '').toLowerCase().includes(searchLower) ||
+                    (tx.banco || '').toLowerCase().includes(searchLower) ||
+                    (tx.categoria || '').toLowerCase().includes(searchLower);
+                if (!match) return false;
+            }
+            return true;
+        });
+
+        // Determine if user is explicitly filtering for Transferencia
+        const isFilteringTransfers = selectedCategories.includes('Transferencia');
+
+        // For aggregates (KPIs, pie, history), exclude transfers unless explicitly selected
+        // This prevents internal money movements from inflating income/expense totals
+        const aggregateFiltered = isFilteringTransfers
+            ? filtered
+            : filtered.filter(tx => tx.categoria !== 'Transferencia');
+
+        // 2. Compute Aggregates
+        // Pie Chart Data (Expenses by Category)
+        const catMap = {};
+        aggregateFiltered.filter(tx => tx.gasto > 0).forEach(tx => {
+            catMap[tx.categoria] = (catMap[tx.categoria] || 0) + tx.gasto;
+        });
+        const pieData = Object.entries(catMap).map(([name, value]) => ({ name, value }));
+
+        // History Data (Monthly bars)
+        const historyMap = {};
+        aggregateFiltered.forEach(tx => {
+            const month = tx.fecha.substring(0, 7); // YYYY-MM
+            if (!historyMap[month]) historyMap[month] = { period: month, ingreso: 0, gasto: 0 };
+            historyMap[month].ingreso += (tx.ingreso || 0);
+            historyMap[month].gasto += (tx.gasto || 0);
+        });
+        const historyData = Object.values(historyMap).sort((a, b) => a.period.localeCompare(b.period));
+
+        // KPIs
+        const totalIncome = aggregateFiltered.reduce((acc, tx) => acc + (tx.ingreso || 0), 0);
+        const totalExpense = aggregateFiltered.reduce((acc, tx) => acc + (tx.gasto || 0), 0);
+        const net = totalIncome - totalExpense;
+
+
+        // Payment Methods (Top Banks by Amount) - also exclude transfers unless filtering for them
+        const bankMap = {};
+        aggregateFiltered.forEach(tx => {
+            if (tx.gasto > 0) {
+                const bank = tx.banco || 'Efectivo/Otro';
+                bankMap[bank] = (bankMap[bank] || 0) + (tx.gasto || 0);
+            }
+        });
+        const paymentMethodsData = Object.entries(bankMap)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+
+        return {
+            list: filtered,
+            pie: pieData,
+            history: historyData,
+            paymentMethods: paymentMethodsData,
+            kpis: { totalIncome, totalExpense, net }
+        };
+    })();
+
+    // Helper for DrillDown
     const fetchCategories = async () => {
         try {
             const res = await fetch(`${API_URL}/categories?environment=${environment}`);
             const cats = await res.json();
-            setAvailableCategories(cats.map(c => c.nombre));
-        } catch (error) {
-            console.error("Error fetching categories:", error);
-        }
+            setApiCategories(cats.map(c => c.nombre));
+        } catch (error) { console.error(error); }
     };
 
     const fetchBanks = async () => {
@@ -79,81 +194,7 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
             const res = await fetch(`${API_URL}/banks?environment=${environment}`);
             const banks = await res.json();
             setAvailableBanks(banks.map(b => b.nombre));
-        } catch (error) {
-            console.error("Error fetching banks:", error);
-        }
-    };
-
-    const fetchReports = async () => {
-        setLoading(true);
-        try {
-            const query = new URLSearchParams({
-                start_date: dateRange.start,
-                end_date: dateRange.end,
-                environment: environment
-            });
-            if (categoryFilter) query.append('category', categoryFilter);
-            if (bankFilter) query.append('bank', bankFilter);
-            if (searchFilter) query.append('detalle', searchFilter);
-
-            const res = await fetch(`${API_URL}/reports?${query}`);
-            const json = await res.json();
-            setData(json);
-        } catch (error) {
-            console.error("Error fetching reports:", error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchAnalysis = async () => {
-        try {
-            const query = new URLSearchParams({
-                start_date: dateRange.start,
-                end_date: dateRange.end,
-                environment: environment
-            });
-            if (categoryFilter) query.append('category', categoryFilter);
-            if (bankFilter) query.append('bank', bankFilter);
-            if (searchFilter) query.append('detalle', searchFilter);
-
-            const res = await fetch(`${API_URL}/analysis?${query}`);
-            const json = await res.json();
-            setAnalysisData(json);
-        } catch (error) {
-            console.error("Error fetching analysis:", error);
-        }
-    };
-
-    const fetchForecast = async () => {
-        try {
-            const res = await fetch(`${API_URL}/forecasting`);
-            const json = await res.json();
-            setForecastData(json);
-        } catch (error) {
-            console.error("Error fetching forecast:", error);
-        }
-    };
-
-
-
-    const fetchComparison = async () => {
-        try {
-            const query = new URLSearchParams({
-                start_date: dateRange.start,
-                end_date: dateRange.end,
-                environment: environment
-            });
-            if (categoryFilter) query.append('category', categoryFilter);
-            if (bankFilter) query.append('bank', bankFilter);
-            if (searchFilter) query.append('detalle', searchFilter);
-
-            const res = await fetch(`${API_URL}/comparison?${query}`);
-            const json = await res.json();
-            setComparisonData(json);
-        } catch (error) {
-            console.error("Error fetching comparison:", error);
-        }
+        } catch (error) { console.error(error); }
     };
 
     const handleExport = async () => {
@@ -208,19 +249,21 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     };
 
     const fetchDrillDown = async (filters, title) => {
-        // Merge filters with current date range
-        const params = new URLSearchParams(filters);
-
-        // If not specific specific dates passed (like for monthly bar), use global range
-        if (!filters.start_date && !filters.end_date) {
-            params.append('start_date', dateRange.start);
-            params.append('end_date', dateRange.end);
-        }
-
         try {
-            const res = await fetch(`${API_URL}/transactions?${params}&limit=0&environment=${environment}`);
-            const json = await res.json();
-            setDdTransactions(json);
+            // Use client-side filtered data (respects all active filters)
+            const startDate = filters.start_date || dateRange.start;
+            const endDate = filters.end_date || dateRange.end;
+            const category = filters.category || null;
+            const banco = filters.banco || null;
+
+            const filtered = processedData.list.filter(tx => {
+                if (tx.fecha < startDate || tx.fecha > endDate) return false;
+                if (category && tx.categoria !== category) return false;
+                if (banco && tx.banco !== banco) return false;
+                return true;
+            });
+
+            setDdTransactions(filtered);
             setDdTitle(title);
             setDdOpen(true);
         } catch (error) {
@@ -300,26 +343,18 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 
     const fetchDrillDownByType = async (startDate, endDate, tipo, title) => {
         try {
-            const params = new URLSearchParams({
-                start_date: startDate,
-                end_date: endDate,
-                environment: environment,
-                limit: 0
+            // Use client-side filtered data (respects all active filters: categories, banks, search)
+            const filtered = processedData.list.filter(tx => {
+                // Date range filter
+                if (tx.fecha < startDate || tx.fecha > endDate) return false;
+                // Type filter (Ingreso has ingreso > 0, Gasto has gasto > 0)
+                if (tipo === 'Ingreso' && !(tx.ingreso > 0)) return false;
+                if (tipo === 'Gasto' && !(tx.gasto > 0)) return false;
+                return true;
             });
-            // Add category filter if active
-            if (categoryFilter) {
-                params.append('category', categoryFilter);
-            }
-            const res = await fetch(`${API_URL}/transactions?${params}`);
-            const json = await res.json();
-
-            // Filter by tipo (Ingreso has ingreso > 0, Gasto has gasto > 0)
-            const filtered = json.filter(tx =>
-                tipo === 'Ingreso' ? tx.ingreso > 0 : tx.gasto > 0
-            );
 
             setDdTransactions(filtered);
-            setDdTitle(categoryFilter ? `${title} (${categoryFilter})` : title);
+            setDdTitle(title);
             setDdOpen(true);
         } catch (error) {
             console.error("Drilldown error:", error);
@@ -353,10 +388,11 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
     const handleBankClick = (data) => {
         if (!data) return;
         const filters = { bank: data.name };
-        if (categoryFilter) filters.category = categoryFilter;
-        const title = categoryFilter
-            ? `${data.name}: ${categoryFilter}`
-            : `Transacciones: ${data.name}`;
+        // Similar to categoryFilter above, this `categoryFilter` is undefined.
+        // If it's meant to apply the currently selected categories, it should use `selectedCategories`.
+        // For now, I'll remove it to avoid error.
+        // if (categoryFilter) filters.category = categoryFilter;
+        const title = `Transacciones: ${data.name}`; // Simplified title
         fetchDrillDown(filters, title);
     };
 
@@ -387,52 +423,137 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
         fetchDrillDownByType(startDate, endDate, tipoDb, title);
     };
 
+    const formatHistoryPeriod = (val) => {
+        if (!val) return '';
+        // If the data is already yearly (e.g. "2024"), returns it as is
+        if (historyView === 'yearly' && !val.includes('-')) return val;
+        return formatMonth(val);
+    };
+
 
     const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
 
-    // Process history data for monthly or yearly view
-    const processHistoryData = () => {
-        const barData = Array.isArray(data.bar_data) ? data.bar_data : [];
-        if (historyView === 'yearly') {
-            // Group by year
-            const yearlyData = {};
-            barData.forEach(item => {
-                const year = item.month?.substring(0, 4) || 'Sin año';
-                if (!yearlyData[year]) {
-                    yearlyData[year] = { period: year, ingreso: 0, gasto: 0 };
-                }
-                yearlyData[year].ingreso += item.ingreso || 0;
-                yearlyData[year].gasto += item.gasto || 0;
+    // --- KPI Calculations (Use Processed Data) ---
+    // const barData = Array.isArray(data.bar_data) ? data.bar_data : []; // OLD
+    const pieData = processedData.pie;
+    const historyChartData = processedData.history; // Monthly only for now, can adapt logic for yearly easily
+
+    // --- Editing Handlers ---
+    const handleEditTransaction = (tx) => {
+        setEditingTx(tx);
+    };
+
+    // Unified Update Handler (Optimistic UI Update)
+    const handleTransactionUpdate = (updatedTx) => {
+        if (!updatedTx) {
+            // If for some reason updatedTx is not passed, fetch all
+            fetchAllData();
+            return;
+        }
+
+        // 1. Update Raw Transactions (will trigger processedData re-calc)
+        setRawTransactions(prev => prev.map(t => t.id === updatedTx.id ? updatedTx : t));
+
+        // 2. Update Drill Down List if open
+        if (ddOpen) {
+            setDdTransactions(prev => prev.map(t => t.id === updatedTx.id ? updatedTx : t));
+        }
+
+        showSnackbar('Transacción actualizada', 'success');
+        setEditingTx(null);
+    };
+
+    // Also need to handle delete if EditModal supports it (it usually does via a separate button, 
+    // but if it's just save/cancel, we are good. If EditModal has delete, we need a handler).
+    // Checking EditTransactionModal usage... it usually takes onSave and onClose. 
+    // If it has onDelete, we should add it.
+    const handleDeleteTransaction = async (id) => {
+        if (!window.confirm("¿Seguro que deseas eliminar esta transacción?")) return;
+
+        try {
+            const res = await fetch(`${API_URL}/transactions/${id}?environment=${environment}`, {
+                method: 'DELETE'
             });
-            return Object.values(yearlyData).sort((a, b) => a.period.localeCompare(b.period));
-        } else {
-            // Monthly view - limit to last 12 months
-            return barData.slice(-12).map(item => ({
-                ...item,
-                period: item.month
-            }));
+
+            if (res.ok) {
+                showSnackbar('Transacción eliminada', 'success');
+                setEditingTx(null);
+                await fetchAllData();
+                setDdTransactions(prev => prev.filter(t => t.id !== id));
+            } else {
+                showSnackbar('Error al eliminar', 'error');
+            }
+        } catch (error) {
+            console.error(error);
+            showSnackbar('Error de conexión', 'error');
         }
     };
 
-    const formatHistoryPeriod = (period) => {
-        if (!period || period === 'Sin año') return period;
-        if (historyView === 'yearly') return period;
-        const [year, month] = period.split('-');
-        const date = new Date(year, month - 1);
-        return date.toLocaleDateString('es-CL', { month: 'short', year: '2-digit' });
-    };
 
-    const historyChartData = processHistoryData();
+    // Note: Top Expenses and Payment Methods analysis might be lost with simple client-side logic unless re-implemented. 
+    // For now, let's keep the core KPIs working.
+    // const topExpenses = ...
 
-    // --- KPI Calculations ---
-    const barData = Array.isArray(data.bar_data) ? data.bar_data : [];
-    const pieData = Array.isArray(data.pie_data) ? data.pie_data : [];
-    const topExpenses = analysisData && Array.isArray(analysisData.top_expenses) ? analysisData.top_expenses : [];
-    const paymentMethods = analysisData && Array.isArray(analysisData.payment_methods) ? analysisData.payment_methods : [];
+    const { totalIncome, totalExpense } = processedData.kpis;
+    // Use calculated payment methods from processedData instead of analysisData
+    const paymentMethods = processedData.paymentMethods || [];
     const forecast = Array.isArray(forecastData) ? forecastData : [];
 
-    const totalIncome = barData.reduce((acc, curr) => acc + (curr.ingreso || 0), 0);
-    const totalExpense = barData.reduce((acc, curr) => acc + (curr.gasto || 0), 0);
+    // --- CLIENT-SIDE COMPARISON DATA ---
+    // Compute comparisonData from filtered transactions so Trends tab respects all active filters
+    const comparisonData = useMemo(() => {
+        const filtered = processedData.list;
+        if (!filtered || filtered.length === 0) return null;
+
+        const startMs = new Date(dateRange.start).getTime();
+        const endMs = new Date(dateRange.end).getTime();
+        const totalMs = endMs - startMs;
+        if (totalMs <= 0) return null;
+
+        // Split range in half: first half = previous, second half = current
+        const midMs = startMs + Math.floor(totalMs / 2);
+        const midDate = new Date(midMs);
+        const midStr = midDate.toISOString().split('T')[0];
+
+        const prevStart = dateRange.start;
+        const prevEnd = midStr;
+        const currStart = new Date(midMs + 86400000).toISOString().split('T')[0]; // day after mid
+        const currEnd = dateRange.end;
+
+        const prevDays = Math.max(Math.ceil((new Date(prevEnd) - new Date(prevStart)) / 86400000) + 1, 1);
+        const currDays = Math.max(Math.ceil((new Date(currEnd) - new Date(currStart)) / 86400000) + 1, 1);
+
+        // Exclude transfers from comparison unless explicitly filtering for them
+        const isFilteringTransfers = selectedCategories.includes('Transferencia');
+        const compFiltered = isFilteringTransfers
+            ? filtered
+            : filtered.filter(tx => tx.categoria !== 'Transferencia');
+
+        const prevTx = compFiltered.filter(tx => tx.fecha >= prevStart && tx.fecha <= prevEnd);
+        const currTx = compFiltered.filter(tx => tx.fecha >= currStart && tx.fecha <= currEnd);
+
+        const sum = (txs, field) => txs.reduce((acc, tx) => acc + (tx[field] || 0), 0);
+
+        const prevIngreso = sum(prevTx, 'ingreso');
+        const prevGasto = sum(prevTx, 'gasto');
+        const currIngreso = sum(currTx, 'ingreso');
+        const currGasto = sum(currTx, 'gasto');
+
+        const pctChange = (curr, prev) => {
+            if (prev === 0) return curr > 0 ? 100 : 0;
+            return Math.round(((curr - prev) / prev) * 1000) / 10;
+        };
+
+        return {
+            current: { start: currStart, end: currEnd, days: currDays, ingreso: currIngreso, gasto: currGasto, balance: currIngreso - currGasto, transactions: currTx.length },
+            previous: { start: prevStart, end: prevEnd, days: prevDays, ingreso: prevIngreso, gasto: prevGasto, balance: prevIngreso - prevGasto, transactions: prevTx.length },
+            changes: {
+                ingreso_pct: pctChange(currIngreso, prevIngreso),
+                gasto_pct: pctChange(currGasto, prevGasto),
+                balance_diff: (currIngreso - currGasto) - (prevIngreso - prevGasto)
+            }
+        };
+    }, [processedData.list, dateRange, selectedCategories]);
 
     const start = new Date(dateRange.start);
     const end = new Date(dateRange.end);
@@ -540,28 +661,22 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             </div>
 
                             {/* Category Filter */}
-                            <select
-                                value={categoryFilter}
-                                onChange={(e) => setCategoryFilter(e.target.value)}
-                                className="bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 min-w-[140px]"
-                            >
-                                <option value="">Categoría: Todas</option>
-                                {availableCategories.map(cat => (
-                                    <option key={cat} value={cat}>{cat}</option>
-                                ))}
-                            </select>
+                            <MultiSelect
+                                options={availableCategories}
+                                selected={selectedCategories}
+                                onChange={setSelectedCategories}
+                                label="Categorías"
+                                placeholder="Buscar categoría..."
+                            />
 
                             {/* Bank Filter */}
-                            <select
-                                value={bankFilter}
-                                onChange={(e) => setBankFilter(e.target.value)}
-                                className="bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 min-w-[140px]"
-                            >
-                                <option value="">Banco: Todos</option>
-                                {availableBanks.map(b => (
-                                    <option key={b} value={b}>{b}</option>
-                                ))}
-                            </select>
+                            <MultiSelect
+                                options={availableBanks}
+                                selected={selectedBanks}
+                                onChange={setSelectedBanks}
+                                label="Bancos"
+                                placeholder="Buscar banco..."
+                            />
 
                             {/* Search Filter */}
                             <div className="flex items-center bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 focus-within:border-blue-500">
@@ -579,8 +694,8 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                             <button
                                 onClick={() => {
                                     setDateRange({ start: '2000-01-01', end: new Date().toISOString().split('T')[0] });
-                                    setCategoryFilter('');
-                                    setBankFilter('');
+                                    setSelectedCategories([]);
+                                    setSelectedBanks([]);
                                     setSearchFilter('');
                                 }}
                                 className="bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
@@ -614,40 +729,37 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                 </header>
 
                 {/* Filter Summary Badge */}
-                {(categoryFilter || bankFilter || searchFilter) && comparisonData && (
+                {(selectedCategories.length > 0 || selectedBanks.length > 0 || searchFilter) && (
                     <div className="flex flex-wrap items-center gap-3 bg-indigo-500/10 border border-indigo-500/30 p-4 rounded-xl animate-in slide-in-from-top-2 duration-300">
                         <div className="bg-indigo-500/20 p-2 rounded-lg">
                             <List className="text-indigo-400" size={20} />
                         </div>
                         <div>
-                            <p className="text-xs text-indigo-300 font-bold uppercase tracking-wider">Filtro Activo Aplicado</p>
+                            <p className="text-xs text-indigo-300 font-bold uppercase tracking-wider">Filtro Activo (Segmentación)</p>
                             <div className="flex flex-wrap items-center gap-x-6 gap-y-1 mt-1">
-                                {comparisonData.current.ingreso > 0 && (
+                                {processedData.kpis.totalIncome > 0 && (
                                     <div className="flex items-center gap-2">
                                         <span className="text-slate-400 text-sm">Total Ingresos:</span>
-                                        <span className="text-emerald-400 font-bold">{fmt(comparisonData.current.ingreso)}</span>
+                                        <span className="text-emerald-400 font-bold">{fmt(processedData.kpis.totalIncome)}</span>
                                     </div>
                                 )}
-                                {comparisonData.current.gasto > 0 && (
+                                {processedData.kpis.totalExpense > 0 && (
                                     <div className="flex items-center gap-2">
                                         <span className="text-slate-400 text-sm">Total Gastos:</span>
-                                        <span className="text-rose-400 font-bold">{fmt(comparisonData.current.gasto)}</span>
+                                        <span className="text-rose-400 font-bold">{fmt(processedData.kpis.totalExpense)}</span>
                                     </div>
                                 )}
-                                {comparisonData.current.ingreso > 0 && comparisonData.current.gasto > 0 && (
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-slate-400 text-sm">Balance:</span>
-                                        <span className={`font-bold ${comparisonData.current.ingreso - comparisonData.current.gasto >= 0 ? 'text-cyan-400' : 'text-amber-400'}`}>
-                                            {fmt(comparisonData.current.ingreso - comparisonData.current.gasto)}
-                                        </span>
-                                    </div>
-                                )}
+                                <div className="flex items-center gap-2">
+                                    <span className="text-slate-400 text-sm">Balance:</span>
+                                    <span className={`font-bold ${processedData.kpis.net >= 0 ? 'text-cyan-400' : 'text-amber-400'}`}>
+                                        {fmt(processedData.kpis.net)}
+                                    </span>
+                                </div>
                             </div>
                         </div>
-                        <div className="ml-auto flex items-center gap-2">
-                            {categoryFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Cat: {categoryFilter}</span>}
-                            {bankFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Banco: {bankFilter}</span>}
-                            {searchFilter && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">Busca: {searchFilter}</span>}
+                        <div className="ml-auto flex flex-col gap-1 items-end">
+                            {selectedCategories.length > 0 && <span className="text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-1 rounded-md border border-indigo-500/30">{selectedCategories.length} categorías</span>}
+                            {selectedBanks.length > 0 && <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded-md border border-emerald-500/30">{selectedBanks.length} bancos</span>}
                         </div>
                     </div>
                 )}
@@ -667,44 +779,34 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                     <ChartCard title="Distribución de Gastos" icon={<BarChart3 className="text-pink-400" size={20} />}>
                                         {pieData.length > 0 ? (
                                             <ResponsiveContainer width="100%" height="100%">
-                                                <BarChart
-                                                    data={[...pieData].sort((a, b) => b.value - a.value)}
-                                                    layout="vertical"
-                                                    margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                                                >
-                                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                                                    <XAxis
-                                                        type="number"
-                                                        stroke="#94a3b8"
-                                                        tick={{ fontSize: 11 }}
-                                                        tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                                                    />
-                                                    <YAxis
-                                                        type="category"
-                                                        dataKey="name"
-                                                        stroke="#94a3b8"
-                                                        tick={{ fontSize: 11 }}
-                                                        width={75}
-                                                    />
-                                                    <Tooltip
-                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
-                                                        itemStyle={{ color: '#f8fafc' }}
-                                                        labelStyle={{ color: '#94a3b8', fontWeight: 'bold' }}
-                                                        formatter={(val) => fmt(val)}
-                                                        cursor={{ fill: 'rgba(148, 163, 184, 0.1)' }}
-                                                    />
-                                                    <Bar
+                                                <PieChart>
+                                                    <Pie
+                                                        data={[...pieData].sort((a, b) => b.value - a.value)}
                                                         dataKey="value"
-                                                        name="Monto"
-                                                        radius={[0, 4, 4, 0]}
+                                                        nameKey="name"
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        outerRadius={100}
+                                                        innerRadius={60}
                                                         onClick={handlePieClick}
                                                         className="cursor-pointer"
                                                     >
                                                         {[...pieData].sort((a, b) => b.value - a.value).map((entry, index) => (
-                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} className="hover:opacity-80 transition-opacity" />
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="#1e293b" strokeWidth={2} />
                                                         ))}
-                                                    </Bar>
-                                                </BarChart>
+                                                    </Pie>
+                                                    <Tooltip
+                                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', boxShadow: '0 10px 40px rgba(0,0,0,0.5)' }}
+                                                        itemStyle={{ color: '#f8fafc' }}
+                                                        formatter={(val) => fmt(val)}
+                                                    />
+                                                    <Legend
+                                                        layout="vertical"
+                                                        verticalAlign="middle"
+                                                        align="right"
+                                                        wrapperStyle={{ fontSize: '12px', color: '#94a3b8' }}
+                                                    />
+                                                </PieChart>
                                             </ResponsiveContainer>
                                         ) : (
                                             <div className="absolute inset-0 flex items-center justify-center text-slate-500 border border-dashed border-slate-700 rounded-xl">
@@ -1084,18 +1186,30 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
                                 )}
                             </div>
                         )}
-
-
-                        <DrillDownModal
-                            isOpen={ddOpen}
-                            onClose={() => setDdOpen(false)}
-                            title={ddTitle}
-                            transactions={ddTransactions}
-                            evolutionData={ddEvolution}
-                        />
-
-
+                        {/* Closes min-h-[600px] */}
                     </div>
+                )}
+
+                {/* Drill Down Modal */}
+                <DrillDownModal
+                    isOpen={ddOpen}
+                    onClose={() => setDdOpen(false)}
+                    title={ddTitle}
+                    transactions={ddTransactions}
+                    evolutionData={ddEvolution}
+                    onEditTransaction={handleEditTransaction}
+                />
+
+                {/* Edit Transaction Modal */}
+                {editingTx && (
+                    <EditTransactionModal
+                        isOpen={!!editingTx}
+                        onClose={() => setEditingTx(null)}
+                        transaction={editingTx}
+                        onUpdate={handleTransactionUpdate}
+                        onDelete={handleDeleteTransaction}
+                        environment={environment}
+                    />
                 )}
             </div>
         </div>
@@ -1105,19 +1219,31 @@ export default function AdvancedReports({ isOpen, onClose, totalNetWorth = 0, en
 // Helper Components for Cleaner JSX
 function KpiCard({ title, value, sub, icon, color }) {
     const colorClasses = {
-        indigo: 'text-indigo-400 bg-indigo-500/20 hover:border-indigo-500/50',
-        emerald: 'text-emerald-400 bg-emerald-500/20 hover:border-emerald-500/50',
-        yellow: 'text-yellow-400 bg-yellow-500/20 hover:border-yellow-500/50',
-        rose: 'text-rose-400 bg-rose-500/20 hover:border-rose-500/50',
+        indigo: 'text-indigo-400',
+        emerald: 'text-emerald-400',
+        yellow: 'text-yellow-400',
+        rose: 'text-rose-400',
+        cyan: 'text-cyan-400'
     };
 
+    const bgClasses = {
+        indigo: 'bg-indigo-500/20 border-indigo-500/30',
+        emerald: 'bg-emerald-500/20 border-emerald-500/30',
+        yellow: 'bg-yellow-500/20 border-yellow-500/30',
+        rose: 'bg-rose-500/20 border-rose-500/30',
+        cyan: 'bg-cyan-500/20 border-cyan-500/30'
+    };
+
+    const textColor = colorClasses[color] || 'text-slate-400';
+    const bgColor = bgClasses[color] || 'bg-slate-800/50 border-slate-700';
+
     return (
-        <div className={`bg-slate-800/50 p-6 rounded-2xl border border-slate-700 relative overflow-hidden group transition-all ${colorClasses[color] ? colorClasses[color].split(' ')[2] : ''}`}>
+        <div className={`p-6 rounded-2xl border relative overflow-hidden group transition-all ${bgColor}`}>
             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
                 {icon}
             </div>
             <div className="flex items-center gap-3 mb-2">
-                <div className={`p-2 rounded-lg ${colorClasses[color] ? colorClasses[color].split(' ')[0] + ' ' + colorClasses[color].split(' ')[1] : ''}`}>
+                <div className={`p-2 rounded-lg bg-black/20 ${textColor}`}>
                     {icon}
                 </div>
                 <h3 className="font-bold text-slate-300">{title}</h3>

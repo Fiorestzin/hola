@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, Plus, Trash2, Tag, Pencil, Check, XCircle } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function CategoriesManager({ isOpen, onClose, environment = "TEST", onCategoryChange }) {
+export default function CategoriesManager({ isOpen, onClose, environment = "TEST", onCategoryChange, embedded = false }) {
     const [categories, setCategories] = useState([]);
     const [newCat, setNewCat] = useState('');
     const [newType, setNewType] = useState('Gasto');
@@ -13,8 +13,8 @@ export default function CategoriesManager({ isOpen, onClose, environment = "TEST
     const [editType, setEditType] = useState('');
 
     useEffect(() => {
-        if (isOpen) fetchCategories();
-    }, [isOpen, environment]);
+        if (isOpen || embedded) fetchCategories();
+    }, [isOpen, environment, embedded]);
 
     const fetchCategories = async () => {
         try {
@@ -87,7 +87,6 @@ export default function CategoriesManager({ isOpen, onClose, environment = "TEST
                 setEditName('');
                 setEditType('');
                 fetchCategories();
-                // Notify parent to refresh transactions (categories may have been renamed)
                 if (onCategoryChange) onCategoryChange();
             }
         } catch (error) {
@@ -95,119 +94,127 @@ export default function CategoriesManager({ isOpen, onClose, environment = "TEST
         }
     };
 
-    if (!isOpen) return null;
+    if (!isOpen && !embedded) return null;
 
-    return (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+    const Content = (
+        <div className={`${embedded ? 'h-full flex flex-col' : 'bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[80vh]'}`}>
 
-                {/* Header */}
-                <div className="p-4 flex justify-between items-center bg-slate-700/50 border-b border-slate-700">
-                    <h2 className="font-bold text-xl flex items-center gap-2 text-indigo-400">
-                        <Tag size={20} /> Gestionar Categorías
-                    </h2>
+            {/* Header */}
+            <div className={`p-4 flex justify-between items-center border-b border-slate-700 ${embedded ? '' : 'bg-slate-700/50'}`}>
+                <h2 className="font-bold text-xl flex items-center gap-2 text-indigo-400">
+                    <Tag size={20} /> Gestionar Categorías
+                </h2>
+                {!embedded && (
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
                         <X />
                     </button>
-                </div>
+                )}
+            </div>
 
-                {/* List */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                    {categories.map((cat) => (
-                        <div key={cat.id} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors">
-                            {editingId === cat.id ? (
-                                /* Edit Mode */
-                                <div className="flex-1 flex items-center gap-2">
-                                    <select
-                                        className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm"
-                                        value={editType}
-                                        onChange={(e) => setEditType(e.target.value)}
-                                    >
-                                        <option value="Gasto">Gasto</option>
-                                        <option value="Ingreso">Ingreso</option>
-                                    </select>
-                                    <input
-                                        type="text"
-                                        className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-indigo-500"
-                                        value={editName}
-                                        onChange={(e) => setEditName(e.target.value)}
-                                        autoFocus
-                                        onKeyDown={(e) => {
-                                            if (e.key === 'Enter') handleSaveEdit();
-                                            if (e.key === 'Escape') handleCancelEdit();
-                                        }}
-                                    />
+            {/* List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {categories.map((cat) => (
+                    <div key={cat.id} className="flex justify-between items-center bg-slate-900/50 p-3 rounded-lg border border-slate-700/50 hover:border-slate-600 transition-colors">
+                        {editingId === cat.id ? (
+                            /* Edit Mode */
+                            <div className="flex-1 flex items-center gap-2">
+                                <select
+                                    className="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm"
+                                    value={editType}
+                                    onChange={(e) => setEditType(e.target.value)}
+                                >
+                                    <option value="Gasto">Gasto</option>
+                                    <option value="Ingreso">Ingreso</option>
+                                </select>
+                                <input
+                                    type="text"
+                                    className="flex-1 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-white text-sm focus:outline-none focus:border-indigo-500"
+                                    value={editName}
+                                    onChange={(e) => setEditName(e.target.value)}
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveEdit();
+                                        if (e.key === 'Escape') handleCancelEdit();
+                                    }}
+                                />
+                                <button
+                                    onClick={handleSaveEdit}
+                                    className="text-emerald-400 hover:text-emerald-300 p-1 transition-colors"
+                                    title="Guardar"
+                                >
+                                    <Check size={18} />
+                                </button>
+                                <button
+                                    onClick={handleCancelEdit}
+                                    className="text-slate-400 hover:text-rose-400 p-1 transition-colors"
+                                    title="Cancelar"
+                                >
+                                    <XCircle size={18} />
+                                </button>
+                            </div>
+                        ) : (
+                            /* View Mode */
+                            <>
+                                <div className="flex items-center gap-3">
+                                    <span className={`w-2 h-2 rounded-full ${cat.tipo === 'Ingreso' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
+                                    <span className="text-slate-200">{cat.nombre}</span>
+                                </div>
+                                <div className="flex items-center gap-1">
                                     <button
-                                        onClick={handleSaveEdit}
-                                        className="text-emerald-400 hover:text-emerald-300 p-1 transition-colors"
-                                        title="Guardar"
+                                        onClick={() => handleStartEdit(cat)}
+                                        className="text-slate-500 hover:text-indigo-400 p-2 transition-colors"
+                                        title="Editar"
                                     >
-                                        <Check size={18} />
+                                        <Pencil size={16} />
                                     </button>
                                     <button
-                                        onClick={handleCancelEdit}
-                                        className="text-slate-400 hover:text-rose-400 p-1 transition-colors"
-                                        title="Cancelar"
+                                        onClick={() => handleDelete(cat.id)}
+                                        className="text-slate-500 hover:text-rose-400 p-2 transition-colors"
+                                        title="Eliminar"
                                     >
-                                        <XCircle size={18} />
+                                        <Trash2 size={16} />
                                     </button>
                                 </div>
-                            ) : (
-                                /* View Mode */
-                                <>
-                                    <div className="flex items-center gap-3">
-                                        <span className={`w-2 h-2 rounded-full ${cat.tipo === 'Ingreso' ? 'bg-emerald-400' : 'bg-rose-400'}`}></span>
-                                        <span className="text-slate-200">{cat.nombre}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <button
-                                            onClick={() => handleStartEdit(cat)}
-                                            className="text-slate-500 hover:text-indigo-400 p-2 transition-colors"
-                                            title="Editar"
-                                        >
-                                            <Pencil size={16} />
-                                        </button>
-                                        <button
-                                            onClick={() => handleDelete(cat.id)}
-                                            className="text-slate-500 hover:text-rose-400 p-2 transition-colors"
-                                            title="Eliminar"
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
-                                    </div>
-                                </>
-                            )}
-                        </div>
-                    ))}
-                    {categories.length === 0 && <p className="text-center text-slate-500 py-4">No hay categorías aun.</p>}
-                </div>
-
-                {/* Add Form */}
-                <form onSubmit={handleAdd} className="p-4 bg-slate-700/30 border-t border-slate-700 flex gap-2">
-                    <select
-                        className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
-                        value={newType}
-                        onChange={(e) => setNewType(e.target.value)}
-                    >
-                        <option value="Gasto">Gasto</option>
-                        <option value="Ingreso">Ingreso</option>
-                    </select>
-                    <input
-                        type="text"
-                        className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                        placeholder="Nueva categoría..."
-                        value={newCat}
-                        onChange={(e) => setNewCat(e.target.value)}
-                    />
-                    <button
-                        type="submit"
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-lg transition-colors"
-                    >
-                        <Plus size={20} />
-                    </button>
-                </form>
-
+                            </>
+                        )}
+                    </div>
+                ))}
+                {categories.length === 0 && <p className="text-center text-slate-500 py-4">No hay categorías aun.</p>}
             </div>
+
+            {/* Add Form */}
+            <form onSubmit={handleAdd} className="p-4 bg-slate-700/30 border-t border-slate-700 flex gap-2">
+                <select
+                    className="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-indigo-500"
+                    value={newType}
+                    onChange={(e) => setNewType(e.target.value)}
+                >
+                    <option value="Gasto">Gasto</option>
+                    <option value="Ingreso">Ingreso</option>
+                </select>
+                <input
+                    type="text"
+                    className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                    placeholder="Nueva categoría..."
+                    value={newCat}
+                    onChange={(e) => setNewCat(e.target.value)}
+                />
+                <button
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-lg transition-colors"
+                >
+                    <Plus size={20} />
+                </button>
+            </form>
+
+        </div>
+    );
+
+    if (embedded) return Content;
+
+    return (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            {Content}
         </div>
     );
 }

@@ -422,14 +422,18 @@ def get_transactions(
     end_date: str = None, 
     category: str = None, 
     bank: str = None,
+    cuenta: str = None,
     detalle: str = None,
+    include_transfers: bool = False,
     environment: str = "PROD"  # TEST (demo) or PROD (real)
 ):
     conn = get_db_connection()
     
-    # Exclude internal transfers from transaction list UNLESS filtering by a specific bank
-    if bank:
-        # If filtering by bank, show everything (including transfers in/out of that bank)
+    # Exclude internal transfers from transaction list UNLESS:
+    # - filtering by a specific bank or category
+    # - explicitly requesting transfers via include_transfers=true
+    if bank or category or include_transfers:
+        # Show everything (including transfers)
         real_query = "SELECT * FROM transactions WHERE environment = ?"
     else:
         # Global list: exclude transfers to avoid double-counting and clutter
@@ -449,6 +453,9 @@ def get_transactions(
     if bank:
         real_query += " AND banco = ?"
         real_params.append(bank)
+    if cuenta:
+        real_query += " AND cuenta = ?"
+        real_params.append(cuenta)
     if detalle:
         real_query += " AND detalle = ?"
         real_params.append(detalle)
@@ -465,7 +472,7 @@ def get_transactions(
     conn.close()
     
     if USE_POSTGRES:
-        columns = ['id', 'fecha', 'tipo', 'categoria', 'detalle', 'banco', 'monto', 'ingreso', 'gasto', 'environment']
+        columns = ['id', 'fecha', 'tipo', 'categoria', 'detalle', 'banco', 'cuenta', 'monto', 'ingreso', 'gasto', 'environment']
         return [dict(zip(columns, row)) for row in rows]
     return [dict(row) for row in rows]
 
@@ -477,13 +484,13 @@ def get_bank_balances(environment: str = "PROD"):
     cursor = conn.cursor()
     query = '''
         SELECT 
-            banco, 
+            banco, cuenta,
             SUM(ingreso) as total_ingreso, 
             SUM(gasto) as total_gasto,
             (SUM(ingreso) - SUM(gasto)) as saldo
         FROM transactions 
         WHERE environment = ? AND banco IS NOT NULL AND banco != 'None' AND banco != 'nan'
-        GROUP BY banco
+        GROUP BY banco, cuenta
         ORDER BY saldo DESC
     '''
     cursor.execute(sql_param(query), [environment])
@@ -491,7 +498,7 @@ def get_bank_balances(environment: str = "PROD"):
     conn.close()
     
     if USE_POSTGRES:
-        return [{"banco": row[0], "total_ingreso": row[1], "total_gasto": row[2], "saldo": row[3]} for row in rows]
+        return [{"banco": row[0], "cuenta": row[1], "total_ingreso": row[2], "total_gasto": row[3], "saldo": row[4]} for row in rows]
     return [dict(row) for row in rows]
 
 
@@ -776,6 +783,7 @@ class Transaction(BaseModel):
     categoria: str
     detalle: str
     banco: str
+    cuenta: str = "Principal"
     monto: float
     environment: str = "PROD"  # TEST (demo) or PROD (real)
 
@@ -796,13 +804,21 @@ def create_transaction(tx: Transaction):
     try:
         print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}")
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, ingreso, gasto, monto_abs, tx.environment))
+            INSERT INTO transactions (fecha, tipo,categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, tx.cuenta, ingreso, gasto, monto_abs, tx.environment))
         
         conn.commit()
+        
+        # Get the new ID
+        if USE_POSTGRES:
+            cursor.execute("SELECT lastval()")
+        else:
+            cursor.execute("SELECT last_insert_rowid()")
+        new_id = cursor.fetchone()[0]
+        
         conn.close()
-        return {"status": "ok", "message": "Transaction created"}
+        return {"status": "ok", "message": "Transaction created", "id": new_id, "tipo": tx.tipo} # Return ID and Type
 
     except Exception as e:
         import traceback
@@ -835,6 +851,7 @@ class TransactionUpdate(BaseModel):
     categoria: str = None
     detalle: str = None
     banco: str = None
+    cuenta: str = None
     monto: float = None
 
 @app.put("/transaction/{tx_id}")
@@ -869,6 +886,9 @@ def update_transaction(tx_id: int, tx: TransactionUpdate):
     if tx.banco is not None:
         updates.append("banco = ?")
         params.append(tx.banco)
+    if tx.cuenta is not None:
+        updates.append("cuenta = ?")
+        params.append(tx.cuenta)
     if tx.monto is not None:
         monto_abs = abs(tx.monto)
         updates.append("monto = ?")
@@ -964,11 +984,17 @@ def init_db():
                 categoria TEXT,
                 detalle TEXT,
                 banco TEXT,
+                cuenta TEXT DEFAULT 'Principal',
                 monto REAL,
                 ingreso REAL,
                 gasto REAL
             )
         ''')
+        
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cuenta TEXT DEFAULT 'Principal'")
+        except:
+            pass
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS budgets (
@@ -1015,6 +1041,20 @@ def init_db():
             cursor.execute("ALTER TABLE banks ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT NULL")
         except:
             pass  # Column already exists
+            
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS accounts (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                environment TEXT DEFAULT NULL
+            )
+        ''')
+        
+        # Migration: Add environment column to accounts if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -1046,6 +1086,7 @@ def init_db():
                 dia_aporte INTEGER,
                 icono TEXT DEFAULT '🎯',
                 color TEXT DEFAULT '#3b82f6',
+                notas TEXT DEFAULT NULL,
                 environment TEXT DEFAULT 'TEST',
                 created_at TEXT
             )
@@ -1094,6 +1135,12 @@ def init_db():
             default_banks = ['Santander', 'Banco de Chile', 'Efectivo', 'Scotiabank', 'Estado', 'Falabella']
             for banco in default_banks:
                 cursor.execute('INSERT INTO banks (nombre) VALUES (%s)', (banco,))
+                
+        cursor.execute('SELECT count(*) FROM accounts')
+        if cursor.fetchone()[0] == 0:
+            default_accounts = ['Principal', 'Cuenta RUT', 'Cuenta Corriente', 'Cuenta de Ahorro', 'Vista', 'Tarjeta de Crédito']
+            for acc in default_accounts:
+                cursor.execute('INSERT INTO accounts (nombre) VALUES (%s)', (acc,))
         
         cursor.execute('SELECT count(*) FROM users')
         if cursor.fetchone()[0] == 0:
@@ -1101,6 +1148,12 @@ def init_db():
             cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (%s, %s, %s)', 
                           ("admin", hashed_pwd, 1))
             print("Created default admin user: admin / fiorestzin")
+            
+        # Migration: Add notas column to savings_goals if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS notas TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
     else:
         # SQLite syntax
         cursor.execute('''
@@ -1111,12 +1164,18 @@ def init_db():
                 categoria TEXT,
                 detalle TEXT,
                 banco TEXT,
+                cuenta TEXT DEFAULT 'Principal',
                 monto REAL,
                 ingreso REAL,
                 gasto REAL,
                 environment TEXT DEFAULT 'TEST'
             )
         ''')
+        
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN cuenta TEXT DEFAULT 'Principal'")
+        except:
+            pass
         
         # Migration: Add environment column to transactions if missing
         try:
@@ -1178,11 +1237,30 @@ def init_db():
             cursor.execute("ALTER TABLE banks ADD COLUMN environment TEXT DEFAULT NULL")
         except:
             pass  # Column already exists
+            
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                environment TEXT DEFAULT NULL
+            )
+        ''')
+        
+        # SQLite migration: Add environment column if missing
+        try:
+            cursor.execute("ALTER TABLE accounts ADD COLUMN environment TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
         
         cursor.execute('SELECT count(*) FROM banks')
         if cursor.fetchone()[0] == 0:
             default_banks = [('Santander',), ('Banco de Chile',), ('Efectivo',), ('Scotiabank',), ('Estado',), ('Falabella',)]
             cursor.executemany('INSERT INTO banks (nombre) VALUES (?)', default_banks)
+            
+        cursor.execute('SELECT count(*) FROM accounts')
+        if cursor.fetchone()[0] == 0:
+            default_accounts = [('Principal',), ('Cuenta RUT',), ('Cuenta Corriente',), ('Cuenta de Ahorro',), ('Vista',), ('Tarjeta de Crédito',)]
+            cursor.executemany('INSERT INTO accounts (nombre) VALUES (?)', default_accounts)
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -1214,6 +1292,7 @@ def init_db():
                 dia_aporte INTEGER,
                 icono TEXT DEFAULT '🎯',
                 color TEXT DEFAULT '#3b82f6',
+                notas TEXT DEFAULT NULL,
                 environment TEXT DEFAULT 'TEST',
                 created_at TEXT
             )
@@ -1252,6 +1331,12 @@ def init_db():
             cursor.execute('INSERT INTO users (username, hashed_password, is_admin) VALUES (?, ?, ?)', 
                           ("admin", hashed_pwd, 1))
             print("Created default admin user: admin / fiorestzin")
+            
+        # Migration: Add notas column to savings_goals if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE savings_goals ADD COLUMN notas TEXT DEFAULT NULL")
+        except:
+            pass  # Column already exists
     
     conn.commit()
     conn.close()
@@ -1403,6 +1488,97 @@ def delete_bank(bank_id: int):
     conn.commit()
     conn.close()
     return {"status": "ok", "message": "Bank deleted"}
+
+
+# --- Accounts Management ---
+
+class AccountModel(BaseModel):
+    nombre: str
+    environment: str = 'PROD'  # TEST (demo) or PROD (real)
+
+@app.get("/accounts")
+def get_accounts(environment: str = None):
+    """Get accounts. If environment is specified, filter by it. Otherwise return all."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if environment:
+        cursor.execute(sql_param(
+            "SELECT id, nombre, environment FROM accounts WHERE environment IS NULL OR environment = '' OR environment = ? ORDER BY nombre"
+        ), (environment,))
+    else:
+        cursor.execute("SELECT id, nombre, environment FROM accounts ORDER BY nombre")
+    
+    rows = cursor.fetchall()
+    conn.close()
+    if USE_POSTGRES:
+        return [{"id": row[0], "nombre": row[1], "environment": row[2]} for row in rows]
+    return [dict(row) for row in rows]
+
+@app.post("/accounts")
+def create_account(account: AccountModel):
+    """Create a new account in the specified environment."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql_param("INSERT INTO accounts (nombre, environment) VALUES (?, ?)"), 
+                       (account.nombre, account.environment))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=str(e))
+    conn.close()
+    return {"status": "ok", "message": "Account created", "environment": account.environment}
+
+@app.delete("/accounts/{acc_id}")
+def delete_account(acc_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("DELETE FROM accounts WHERE id = ?"), (acc_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": "Account deleted"}
+
+@app.get("/banks/with-balance")
+def get_banks_with_balance(environment: str = "PROD"):
+    """Get banks that have a positive calculated balance (Income - Expenses)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get all banks
+    cursor.execute(sql_param("SELECT id, nombre FROM banks WHERE environment IS NULL OR environment = '' OR environment = ?"), (environment,))
+    banks = cursor.fetchall()
+    
+    positive_banks = []
+    
+    for bank_row in banks:
+        b_id, b_name = bank_row
+        
+        # Calculate balance for this bank
+        # Balance = Sum(Income) - Sum(Expense)
+        # Transactions have 'ingreso' and 'gasto' columns (or we use 'tipo' and 'monto')
+        # Based on init_db, transactions has 'ingreso' and 'gasto' columns.
+        
+        if USE_POSTGRES:
+            cursor.execute(sql_param('''
+                SELECT COALESCE(SUM(ingreso), 0) - COALESCE(SUM(gasto), 0)
+                FROM transactions 
+                WHERE banco = ? AND (environment = ? OR environment IS NULL)
+            '''), (b_name, environment))
+        else:
+            cursor.execute(sql_param('''
+                SELECT COALESCE(SUM(ingreso), 0) - COALESCE(SUM(gasto), 0)
+                FROM transactions 
+                WHERE banco = ? AND (environment = ? OR environment IS NULL)
+            '''), (b_name, environment))
+            
+        balance = cursor.fetchone()[0]
+        
+        if balance > 0:
+            positive_banks.append({"id": b_id, "nombre": b_name, "saldo": balance})
+            
+    conn.close()
+    return positive_banks
 
 
 
@@ -1910,7 +2086,7 @@ def get_savings_goals(environment: str = "PROD"):
     
     cursor.execute(sql_param('''
         SELECT id, nombre, monto_objetivo, monto_actual, fecha_limite, 
-               frecuencia_aporte, dia_aporte, icono, color, environment, created_at
+               frecuencia_aporte, dia_aporte, icono, color, environment, created_at, notas
         FROM savings_goals WHERE environment = ? ORDER BY created_at DESC
     '''), (environment,))
     
@@ -1925,7 +2101,7 @@ def get_savings_goals(environment: str = "PROD"):
                 "monto_actual": row[3], "fecha_limite": row[4],
                 "frecuencia_aporte": row[5], "dia_aporte": row[6],
                 "icono": row[7], "color": row[8], "environment": row[9],
-                "created_at": row[10],
+                "created_at": row[10], "notas": row[11],
                 "porcentaje": round((row[3] / row[2]) * 100, 1) if row[2] > 0 else 0
             })
         else:
@@ -1966,6 +2142,19 @@ def create_savings_goal(goal: SavingsGoalCreate):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+class GoalNotesUpdate(BaseModel):
+    notas: str
+
+@app.put("/savings-goals/{goal_id}/notas")
+def update_goal_notas(goal_id: int, update: GoalNotesUpdate):
+    """Update notes of a savings goal."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("UPDATE savings_goals SET notas = ? WHERE id = ?"), (update.notas, goal_id))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
 
 @app.put("/savings-goals/{goal_id}")
 def update_savings_goal(goal_id: int, goal: SavingsGoalUpdate):
@@ -2067,10 +2256,19 @@ def contribute_to_goal(goal_id: int, contribution: SavingsContributionCreate):
                        (new_amount, goal_id))
         
         conn.commit()
+        
+        # Get the new ID
+        if USE_POSTGRES:
+            cursor.execute("SELECT lastval()")
+        else:
+            cursor.execute("SELECT last_insert_rowid()")
+        new_contribution_id = cursor.fetchone()[0]
+
         return {
             "status": "ok", 
             "message": f"Aporte de ${contribution.monto:,.0f} registrado",
-            "nuevo_total": new_amount
+            "nuevo_total": new_amount,
+            "contribution_id": new_contribution_id
         }
     except Exception as e:
         conn.rollback()
@@ -2159,6 +2357,137 @@ def get_goal_history(goal_id: int):
     history.sort(key=lambda x: x['fecha'], reverse=True)
     
     return history
+
+@app.get("/savings-goals/by-bank")
+def get_savings_by_bank(environment: str = "PROD"):
+    """Get total savings accumulated per bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT c.banco, SUM(c.monto)
+        FROM savings_contributions c
+        JOIN savings_goals g ON c.goal_id = g.id
+        WHERE g.environment = ? AND c.banco IS NOT NULL AND c.banco != ''
+        GROUP BY c.banco
+    '''), (environment,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Return as dict {banco: total}
+    return {row[0]: row[1] for row in rows}
+
+def update_goal_total(goal_id: int):
+    """Recalculate and update the current amount of a goal based on contributions."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param("SELECT COALESCE(SUM(monto), 0) FROM savings_contributions WHERE goal_id = ?"), (goal_id,))
+    total = cursor.fetchone()[0]
+    cursor.execute(sql_param("UPDATE savings_goals SET monto_actual = ? WHERE id = ?"), (total, goal_id))
+    conn.commit()
+    conn.close()
+
+@app.put("/savings-contributions/{contribution_id}")
+def update_contribution(contribution_id: int, data: dict):
+    """Update a savings contribution."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param("SELECT goal_id FROM savings_contributions WHERE id = ?"), (contribution_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Aporte no encontrado")
+    
+    goal_id = row[0] if USE_POSTGRES else row['goal_id']
+    
+    fields = []
+    params = []
+    if "monto" in data:
+        fields.append("monto = ?")
+        params.append(data["monto"])
+    if "fecha" in data:
+        fields.append("fecha = ?")
+        params.append(data["fecha"])
+    if "banco" in data:
+        fields.append("banco = ?")
+        params.append(data["banco"])
+        
+    if not fields:
+        conn.close()
+        return {"message": "No fields to update"}
+        
+    query = f"UPDATE savings_contributions SET {', '.join(fields)} WHERE id = ?"
+    params.append(contribution_id)
+    
+    cursor.execute(sql_param(query), params)
+    conn.commit()
+    conn.close()
+    
+    # Update goal totals
+    update_goal_total(goal_id)
+    
+    return {"status": "ok"}
+
+@app.delete("/savings-contributions/{contribution_id}")
+def delete_contribution(contribution_id: int):
+    """Delete a savings contribution."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param("SELECT goal_id FROM savings_contributions WHERE id = ?"), (contribution_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Aporte no encontrado")
+    
+    goal_id = row[0] if USE_POSTGRES else row['goal_id']
+    
+    cursor.execute(sql_param("DELETE FROM savings_contributions WHERE id = ?"), (contribution_id,))
+    conn.commit()
+    conn.close()
+    
+    # Update goal totals
+    update_goal_total(goal_id)
+    
+    return {"status": "ok"}
+
+@app.delete("/savings-withdrawals/{withdrawal_id}")
+def delete_withdrawal(withdrawal_id: int):
+    """Delete a withdrawal and its associated negative contribution."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get withdrawal info
+    cursor.execute(sql_param("SELECT goal_id, monto, fecha, banco FROM savings_withdrawals WHERE id = ?"), (withdrawal_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Retiro no encontrado")
+    
+    goal_id = row[0] if USE_POSTGRES else row['goal_id']
+    monto = row[1] if USE_POSTGRES else row['monto']
+    fecha = row[2] if USE_POSTGRES else row['fecha']
+    banco = row[3] if USE_POSTGRES else row['banco']
+    
+    # Delete associated negative contribution
+    # Note: We find it by matching criteria as there isn't a direct link ID
+    cursor.execute(sql_param('''
+        DELETE FROM savings_contributions 
+        WHERE goal_id = ? AND monto = ? AND fecha = ? AND banco = ?
+    '''), (goal_id, -monto, fecha, banco))
+    
+    # Delete withdrawal
+    cursor.execute(sql_param("DELETE FROM savings_withdrawals WHERE id = ?"), (withdrawal_id,))
+    
+    conn.commit()
+    conn.close()
+    
+    # Update goal totals
+    update_goal_total(goal_id)
+    
+    return {"status": "ok"}
 
 @app.get("/savings-goals/summary")
 def get_savings_summary(environment: str = "PROD"):
@@ -2257,6 +2586,53 @@ def complete_savings_goal(goal_id: int):
     conn.close()
     
     return {"message": "¡Meta completada! Los comprometidos han sido liberados."}
+
+# ============ SAVINGS TRANSFER ENDPOINTS ============
+
+class SavingsTransfer(BaseModel):
+    banco_origen: str
+    banco_destino: str
+    goal_ids: Optional[list[int]] = None # If None, transfer ALL goals from that bank
+    environment: str = "PROD"
+
+@app.post("/savings/transfer-between-banks")
+def transfer_savings_between_banks(transfer: SavingsTransfer):
+    """
+    Conceptual transfer: Changes the 'banco' association for existing savings contributions.
+    Does NOT create a real money transfer transaction.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Build the query
+        query = "UPDATE savings_contributions SET banco = ? WHERE banco = ?"
+        params = [transfer.banco_destino, transfer.banco_origen]
+        
+        # If specific goals are provided, limit the update
+        if transfer.goal_ids and len(transfer.goal_ids) > 0:
+            placeholders = ",".join(["?"] * len(transfer.goal_ids))
+            query += f" AND goal_id IN ({placeholders})"
+            params.extend(transfer.goal_ids)
+            
+        # Security: Only update contributions belonging to goals in the current environment
+        query += " AND goal_id IN (SELECT id FROM savings_goals WHERE environment = ?)"
+        params.append(transfer.environment)
+        
+        cursor.execute(sql_param(query), params)
+        updated_count = cursor.rowcount
+        
+        conn.commit()
+        return {
+            "status": "ok", 
+            "message": f"Se han migrado {updated_count} registros de ahorro conceptualmente.",
+            "updated_count": updated_count
+        }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 # ============ SAVINGS WITHDRAWALS ENDPOINTS ============
 

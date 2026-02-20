@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Trash2, AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, Tag, Building2, FileText, Calculator, Percent } from 'lucide-react';
+import { X, Save, Trash2, AlertTriangle, TrendingUp, TrendingDown, Calendar, DollarSign, Tag, Building2, FileText, Calculator, Percent, ArrowDownUp } from 'lucide-react';
 import { API_URL } from "../config";
 // force refresh mechanism
 
@@ -19,11 +19,13 @@ export default function EditTransactionModal({
         categoria: '',
         detalle: '',
         banco: '',
+        cuenta: 'Principal',
         tipo: 'Gasto'
     });
 
     const [categories, setCategories] = useState([]);
     const [banks, setBanks] = useState([]);
+    const [accounts, setAccounts] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -43,6 +45,7 @@ export default function EditTransactionModal({
                 categoria: transaction.categoria || '',
                 detalle: transaction.detalle || '',
                 banco: transaction.banco || '',
+                cuenta: transaction.cuenta || 'Principal',
                 tipo: transaction.ingreso > 0 ? 'Ingreso' : 'Gasto'
             });
             setError('');
@@ -53,9 +56,10 @@ export default function EditTransactionModal({
             setIsNetMode(false);
             setNetAmount('');
 
-            // Fetch categories and banks
+            // Fetch categories, banks, and accounts
             fetchCategories();
             fetchBanks();
+            fetchAccounts();
         }
     }, [isOpen, transaction, environment]);
 
@@ -104,6 +108,18 @@ export default function EditTransactionModal({
         }
     };
 
+    const fetchAccounts = async () => {
+        try {
+            const res = await fetch(`${API_URL}/accounts?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setAccounts(data);
+            }
+        } catch (err) {
+            console.error('Error fetching accounts:', err);
+        }
+    };
+
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
@@ -123,12 +139,14 @@ export default function EditTransactionModal({
                     categoria: formData.categoria,
                     detalle: formData.detalle,
                     banco: formData.banco,
+                    cuenta: formData.cuenta || 'Principal',
                     monto: parseFloat(formData.monto)
                 })
             });
 
             if (res.ok) {
-                if (onUpdate) onUpdate();
+                const updated = await res.json();
+                if (onUpdate) onUpdate(updated);
                 onClose();
             } else {
                 const data = await res.json();
@@ -169,23 +187,11 @@ export default function EditTransactionModal({
             return;
         }
 
-        // Proceed with delete
-        setLoading(true);
-        try {
-            const res = await fetch(`${API_URL}/transaction/${transaction.id}`, {
-                method: 'DELETE'
-            });
-
-            if (res.ok) {
-                if (onDelete) onDelete();
-                onClose();
-            } else {
-                setError('Error al eliminar');
-            }
-        } catch (err) {
-            setError('Error de conexión');
-        } finally {
-            setLoading(false);
+        // Delegate delete to parent (App.jsx) handling Undo logic
+        if (onDelete && typeof onDelete === 'function') {
+            // We pass the transaction ID to the parent handler
+            onDelete(transaction.id);
+            onClose();
         }
     };
 
@@ -238,12 +244,22 @@ export default function EditTransactionModal({
                         <button
                             type="button"
                             onClick={() => setFormData({ ...formData, tipo: 'Gasto', categoria: '' })}
-                            className={`flex-1 py-2 rounded-lg font-bold transition-all ${!isIngreso
+                            className={`flex-1 py-2 rounded-lg font-bold transition-all ${!isIngreso && formData.tipo !== 'Transferencia'
                                 ? 'bg-rose-600 text-white'
                                 : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                                 }`}
                         >
                             <TrendingDown size={16} className="inline mr-1" /> Gasto
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setFormData({ ...formData, tipo: 'Transferencia', categoria: '' })}
+                            className={`flex-1 py-2 rounded-lg font-bold transition-all ${formData.tipo === 'Transferencia'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                                }`}
+                        >
+                            <ArrowDownUp size={16} className="inline mr-1" /> Transf.
                         </button>
                     </div>
 
@@ -321,8 +337,8 @@ export default function EditTransactionModal({
                         )}
                     </div>
 
-                    {/* Date and Bank */}
-                    <div className="grid grid-cols-2 gap-3">
+                    {/* Date, Bank and Account */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                             <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
                                 <Calendar size={14} /> Fecha
@@ -349,6 +365,21 @@ export default function EditTransactionModal({
                                 <option value="">Sin banco</option>
                                 {banks.map(b => (
                                     <option key={b.id} value={b.nombre}>{b.nombre}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
+                                <FileText size={14} /> Cuenta
+                            </label>
+                            <select
+                                name="cuenta"
+                                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                                value={formData.cuenta}
+                                onChange={handleChange}
+                            >
+                                {accounts.map(a => (
+                                    <option key={a.id} value={a.nombre}>{a.nombre}</option>
                                 ))}
                             </select>
                         </div>
