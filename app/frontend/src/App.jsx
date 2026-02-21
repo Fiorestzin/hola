@@ -463,38 +463,42 @@ function App() {
                   </div>
 
                   {/* Cuentas Desglose */}
-                  {bank.accounts && (
-                    <div className="mt-3">
-                      {bank.accounts.length > 1 ? (
-                        <>
-                          <button
-                            onClick={(e) => toggleBankExpand(e, bankName)}
-                            className="flex items-center justify-between w-full text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-2 py-1.5 rounded-lg font-medium"
-                          >
-                            <span>{expandedBanks.includes(bankName) ? 'Ocultar cuentas' : `Ver ${bank.accounts.length} cuentas`}</span>
-                          </button>
-                          {expandedBanks.includes(bankName) && (
-                            <div className="mt-2 space-y-1.5 animate-in slide-in-from-top-2 fade-in duration-200">
-                              {bank.accounts.map((acc, aIdx) => (
-                                <div key={aIdx} className="flex justify-between items-center text-xs bg-slate-900/40 p-1.5 rounded-md border border-slate-700/50">
-                                  <span className="text-slate-400 truncate w-2/3" title={acc.cuenta}>{acc.cuenta}</span>
-                                  <span className={`font-medium ${acc.saldo < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
-                                    {formatPrivacy(acc.saldo, bankName)}
-                                  </span>
-                                </div>
-                              ))}
+                  {bank.accounts && (() => {
+                    const activeAccounts = bank.accounts.filter(a => a.saldo !== 0);
+                    if (activeAccounts.length === 0) return null;
+                    return (
+                      <div className="mt-3">
+                        {activeAccounts.length > 1 ? (
+                          <>
+                            <button
+                              onClick={(e) => toggleBankExpand(e, bankName)}
+                              className="flex items-center justify-between w-full text-xs text-blue-400 hover:text-blue-300 transition-colors bg-blue-500/10 hover:bg-blue-500/20 px-2 py-1.5 rounded-lg font-medium"
+                            >
+                              <span>{expandedBanks.includes(bankName) ? 'Ocultar cuentas' : `Ver ${activeAccounts.length} cuentas`}</span>
+                            </button>
+                            {expandedBanks.includes(bankName) && (
+                              <div className="mt-2 space-y-1.5 animate-in slide-in-from-top-2 fade-in duration-200">
+                                {activeAccounts.map((acc, aIdx) => (
+                                  <div key={aIdx} className="flex justify-between items-center text-xs bg-slate-900/40 p-1.5 rounded-md border border-slate-700/50">
+                                    <span className="text-slate-400 truncate w-2/3" title={acc.cuenta}>{acc.cuenta}</span>
+                                    <span className={`font-medium ${acc.saldo < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                                      {formatPrivacy(acc.saldo, bankName)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          activeAccounts[0].cuenta !== 'Principal' && (
+                            <div className="flex justify-between items-center text-[10px] bg-slate-900/40 px-2 py-1 rounded border border-slate-700/50">
+                              <span className="text-slate-500 font-mono truncate">{activeAccounts[0].cuenta}</span>
                             </div>
-                          )}
-                        </>
-                      ) : (
-                        bank.accounts[0].cuenta !== 'Principal' && (
-                          <div className="flex justify-between items-center text-[10px] bg-slate-900/40 px-2 py-1 rounded border border-slate-700/50">
-                            <span className="text-slate-500 font-mono truncate">{bank.accounts[0].cuenta}</span>
-                          </div>
-                        )
-                      )}
-                    </div>
-                  )}
+                          )
+                        )}
+                      </div>
+                    );
+                  })()}
                   {aportadoDesdeBanco > 0 && (
                     <div className="mt-2 pt-2 border-t border-slate-700/50">
                       <div className="flex justify-between items-center text-xs">
