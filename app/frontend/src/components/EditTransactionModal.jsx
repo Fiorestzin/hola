@@ -19,7 +19,7 @@ export default function EditTransactionModal({
         categoria: '',
         detalle: '',
         banco: '',
-        cuenta: 'Principal',
+        cuenta: '',
         tipo: 'Gasto'
     });
 
@@ -45,7 +45,7 @@ export default function EditTransactionModal({
                 categoria: transaction.categoria || '',
                 detalle: transaction.detalle || '',
                 banco: transaction.banco || '',
-                cuenta: transaction.cuenta || 'Principal',
+                cuenta: transaction.cuenta || '',
                 tipo: transaction.ingreso > 0 ? 'Ingreso' : 'Gasto'
             });
             setError('');
@@ -139,7 +139,7 @@ export default function EditTransactionModal({
                     categoria: formData.categoria,
                     detalle: formData.detalle,
                     banco: formData.banco,
-                    cuenta: formData.cuenta || 'Principal',
+                    cuenta: formData.banco === 'Efectivo' ? '' : formData.cuenta,
                     monto: parseFloat(formData.monto)
                 })
             });
@@ -368,21 +368,23 @@ export default function EditTransactionModal({
                                 ))}
                             </select>
                         </div>
-                        <div>
-                            <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
-                                <FileText size={14} /> Cuenta
-                            </label>
-                            <select
-                                name="cuenta"
-                                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                                value={formData.cuenta}
-                                onChange={handleChange}
-                            >
-                                {accounts.map(a => (
-                                    <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                ))}
-                            </select>
-                        </div>
+                        {formData.banco !== 'Efectivo' && (
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
+                                    <FileText size={14} /> Cuenta
+                                </label>
+                                <select
+                                    name="cuenta"
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                                    value={formData.cuenta}
+                                    onChange={handleChange}
+                                >
+                                    {accounts.map(a => (
+                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </div>
 
                     {/* Category */}

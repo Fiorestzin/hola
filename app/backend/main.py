@@ -784,7 +784,7 @@ class Transaction(BaseModel):
     categoria: str
     detalle: str
     banco: str
-    cuenta: str = "Principal"
+    cuenta: str = None
     monto: float
     environment: str = "PROD"  # TEST (demo) or PROD (real)
 
@@ -924,16 +924,17 @@ def update_transaction(tx_id: int, tx: TransactionUpdate):
 class Transfer(BaseModel):
     fecha: str
     banco_origen: str
+    cuenta_origen: str = None
     banco_destino: str
+    cuenta_destino: str = None
     monto: float
     detalle: str = "Transferencia interna"
     environment: str = "TEST"
 
 @app.post("/transfer")
 def create_transfer(transfer: Transfer):
-    """Create an internal transfer between two banks (creates 2 linked transactions)."""
-    if transfer.banco_origen == transfer.banco_destino:
-        raise HTTPException(status_code=400, detail="Banco origen y destino no pueden ser iguales")
+    if transfer.banco_origen == transfer.banco_destino and transfer.cuenta_origen == transfer.cuenta_destino:
+        raise HTTPException(status_code=400, detail="Origen y destino no pueden ser exactamente iguales")
     
     if transfer.monto <= 0:
         raise HTTPException(status_code=400, detail="El monto debe ser mayor a 0")
@@ -945,24 +946,56 @@ def create_transfer(transfer: Transfer):
         # Transaction 1: Gasto (salida) from banco_origen
         detalle_salida = f"↗ {transfer.detalle} → {transfer.banco_destino}"
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''), (transfer.fecha, 'Gasto', 'Transferencia', detalle_salida, 
-               transfer.banco_origen, 0, transfer.monto, transfer.monto, transfer.environment))
+               transfer.banco_origen, transfer.cuenta_origen, 0, transfer.monto, transfer.monto, transfer.environment))
         
         # Transaction 2: Ingreso (entrada) to banco_destino
         detalle_entrada = f"↘ {transfer.detalle} ← {transfer.banco_origen}"
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, ingreso, gasto, monto, environment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         '''), (transfer.fecha, 'Ingreso', 'Transferencia', detalle_entrada,
-               transfer.banco_destino, transfer.monto, 0, transfer.monto, transfer.environment))
+               transfer.banco_destino, transfer.cuenta_destino, transfer.monto, 0, transfer.monto, transfer.environment))
         
         conn.commit()
         return {
             "status": "ok", 
             "message": f"Transferencia de ${transfer.monto:,.0f} realizada: {transfer.banco_origen} → {transfer.banco_destino}"
         }
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+class MigrateAccount(BaseModel):
+    banco: str
+    cuenta_origen: str = None
+    cuenta_destino: str
+    environment: str = "PROD"
+
+@app.post("/migrate-account")
+def migrate_old_account(data: MigrateAccount):
+    """Reasignar cuenta masivamente para transacciones históricas de un banco y cuenta determinados"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Si cuenta_origen es None o vacía
+        if not data.cuenta_origen or data.cuenta_origen == "None":
+            query = "UPDATE transactions SET cuenta = ? WHERE banco = ? AND (cuenta IS NULL OR cuenta = '') AND environment = ?"
+            params = [data.cuenta_destino, data.banco, data.environment]
+        else:
+            query = "UPDATE transactions SET cuenta = ? WHERE banco = ? AND cuenta = ? AND environment = ?"
+            params = [data.cuenta_destino, data.banco, data.cuenta_origen, data.environment]
+            
+        cursor.execute(sql_param(query), params)
+        rows_affected = cursor.rowcount
+        conn.commit()
+        
+        return {"status": "ok", "message": f"Migración completa. Filas actualizadas: {rows_affected}"}
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))

@@ -13,7 +13,7 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
         categoria: '',
         detalle: '',
         banco: 'Efectivo', // Default
-        cuenta: 'Principal'
+        cuenta: ''
     });
 
     // Net/Gross Calculator State
@@ -40,7 +40,12 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
 
             fetch(`${API_URL}/accounts?environment=${environment}`)
                 .then(res => res.json())
-                .then(data => setAccounts(data))
+                .then(data => {
+                    setAccounts(data);
+                    if (data.length > 0 && !formData.cuenta) {
+                        setFormData(prev => ({ ...prev, cuenta: data[0].nombre }));
+                    }
+                })
                 .catch(err => console.error(err));
         }
     }, [isOpen, environment]);
@@ -74,7 +79,11 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        await onSave({ ...formData, tipo: type });
+        const finalData = { ...formData, tipo: type };
+        if (finalData.banco === 'Efectivo') {
+            finalData.cuenta = '';
+        }
+        await onSave(finalData);
         onClose();
     };
 
@@ -203,19 +212,21 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                                 ))}
                             </select>
                         </div>
-                        <div>
-                            <label className="block text-sm text-slate-400 mb-1">Cuenta</label>
-                            <select
-                                name="cuenta"
-                                className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
-                                value={formData.cuenta}
-                                onChange={handleChange}
-                            >
-                                {accounts.map(a => (
-                                    <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                ))}
-                            </select>
-                        </div>
+                        {formData.banco !== 'Efectivo' && (
+                            <div>
+                                <label className="block text-sm text-slate-400 mb-1">Cuenta</label>
+                                <select
+                                    name="cuenta"
+                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
+                                    value={formData.cuenta}
+                                    onChange={handleChange}
+                                >
+                                    {accounts.map(a => (
+                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </div>
 
                     <div>

@@ -1,16 +1,18 @@
 import { useState, useEffect } from 'react';
-import { X, Globe, Building2, Tag, Shield, Monitor, MapPin, Menu, User, Database } from 'lucide-react';
+import { X, Globe, Building2, Tag, Shield, Monitor, MapPin, Menu, User, Database, Replace } from 'lucide-react';
 import { useSnackbar } from '../context/SnackbarContext';
 import BanksManager from './BanksManager';
 import AccountsManager from './AccountsManager';
 import CategoriesManager from './CategoriesManager';
 import SettingsPanel from './SettingsPanel';
+import AccountMigratorModal from './AccountMigratorModal';
 
 export default function ControlCenterModal({ isOpen, onClose, timeZone, setTimeZone, token, onCategoryChange }) {
     if (!isOpen) return null;
 
     const [activeTab, setActiveTab] = useState('general');
     const { showSnackbar } = useSnackbar();
+    const [isMigratorOpen, setIsMigratorOpen] = useState(false);
 
     // Time Zone Logic (from old SettingsModal)
     const [detectedZone, setDetectedZone] = useState('');
@@ -119,9 +121,32 @@ export default function ControlCenterModal({ isOpen, onClose, timeZone, setTimeZ
 
             case 'data':
                 return (
-                    <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-4">
-                        <Database size={64} className="opacity-20" />
-                        <p>Próximamente: Importar y Exportar datos</p>
+                    <div className="flex flex-col items-center justify-center p-8 text-slate-400 space-y-6">
+                        <Database size={64} className="opacity-20 text-amber-500" />
+                        <div className="text-center max-w-md">
+                            <h3 className="text-xl font-bold text-white mb-2">Herramientas de Datos (PROD & TEST)</h3>
+                            <p className="text-sm">Gestión avanzada de historial y exportación.</p>
+                        </div>
+
+                        <div className="w-full max-w-sm space-y-3">
+                            <button
+                                onClick={() => setIsMigratorOpen(true)}
+                                className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all"
+                            >
+                                <Replace size={18} /> Reasignar Cuentas Masivamente
+                            </button>
+
+                            <button className="w-full bg-slate-800 border border-slate-700 text-slate-500 py-3 px-4 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed">
+                                Próximamente: Importar CSV
+                            </button>
+                        </div>
+
+                        <AccountMigratorModal
+                            isOpen={isMigratorOpen}
+                            onClose={() => setIsMigratorOpen(false)}
+                            environment="TEST" // Default unless parameterized later
+                            onMigrationComplete={() => showSnackbar("Migración de cuentas completada", "success")}
+                        />
                     </div>
                 );
 

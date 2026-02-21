@@ -5,7 +5,10 @@ import { API_URL } from "../config";
 export default function TransferModal({ isOpen, onClose, environment = "TEST", onTransferComplete }) {
     const [banks, setBanks] = useState([]);
     const [bancoOrigen, setBancoOrigen] = useState('');
+    const [cuentaOrigen, setCuentaOrigen] = useState('');
     const [bancoDestino, setBancoDestino] = useState('');
+    const [cuentaDestino, setCuentaDestino] = useState('');
+    const [accounts, setAccounts] = useState([]);
     const [monto, setMonto] = useState('');
     const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0]);
     const [detalle, setDetalle] = useState('Transferencia interna');
@@ -15,9 +18,12 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
     useEffect(() => {
         if (isOpen) {
             fetchBanks();
+            fetchAccounts();
             // Reset form
             setBancoOrigen('');
+            setCuentaOrigen('');
             setBancoDestino('');
+            setCuentaDestino('');
             setMonto('');
             setFecha(new Date().toISOString().split('T')[0]);
             setDetalle('Transferencia interna');
@@ -37,6 +43,18 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
         }
     };
 
+    const fetchAccounts = async () => {
+        try {
+            const res = await fetch(`${API_URL}/accounts?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setAccounts(data);
+            }
+        } catch (error) {
+            console.error("Error loading accounts:", error);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
@@ -46,8 +64,18 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
             return;
         }
 
-        if (bancoOrigen === bancoDestino) {
-            setError('Origen y destino no pueden ser iguales');
+        if (bancoOrigen !== 'Efectivo' && !cuentaOrigen) {
+            setError('Selecciona cuenta de origen');
+            return;
+        }
+
+        if (bancoDestino !== 'Efectivo' && !cuentaDestino) {
+            setError('Selecciona cuenta de destino');
+            return;
+        }
+
+        if (bancoOrigen === bancoDestino && cuentaOrigen === cuentaDestino) {
+            setError('Origen y destino no pueden ser exactamente iguales');
             return;
         }
 
@@ -64,7 +92,9 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                 body: JSON.stringify({
                     fecha,
                     banco_origen: bancoOrigen,
+                    cuenta_origen: bancoOrigen === 'Efectivo' ? '' : cuentaOrigen,
                     banco_destino: bancoDestino,
+                    cuenta_destino: bancoDestino === 'Efectivo' ? '' : cuentaDestino,
                     monto: parseFloat(monto),
                     detalle,
                     environment
@@ -117,21 +147,39 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                 <form onSubmit={handleSubmit} className="p-5 space-y-4">
 
                     {/* Bank Origin */}
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1">Desde (Origen)</label>
-                        <select
-                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                            value={bancoOrigen}
-                            onChange={(e) => setBancoOrigen(e.target.value)}
-                            required
-                        >
-                            <option value="">Seleccionar banco origen...</option>
-                            {banks.map((bank) => (
-                                <option key={bank.id} value={bank.nombre} disabled={bank.nombre === bancoDestino}>
-                                    {bank.nombre}
-                                </option>
-                            ))}
-                        </select>
+                    <div className="flex gap-2">
+                        <div className="flex-1">
+                            <label className="block text-sm text-slate-400 mb-1">Desde</label>
+                            <select
+                                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                value={bancoOrigen}
+                                onChange={(e) => setBancoOrigen(e.target.value)}
+                                required
+                            >
+                                <option value="">Banco origen...</option>
+                                {banks.map((bank) => (
+                                    <option key={bank.id} value={bank.nombre}>
+                                        {bank.nombre}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        {bancoOrigen !== 'Efectivo' && (
+                            <div className="flex-1">
+                                <label className="block text-sm text-slate-400 mb-1">Cuenta origen</label>
+                                <select
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                    value={cuentaOrigen}
+                                    onChange={(e) => setCuentaOrigen(e.target.value)}
+                                    required={bancoOrigen !== 'Efectivo'}
+                                >
+                                    <option value="">Seleccionar...</option>
+                                    {accounts.map(a => (
+                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </div>
 
                     {/* Arrow indicator */}
@@ -140,21 +188,39 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                     </div>
 
                     {/* Bank Destination */}
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1">Hacia (Destino)</label>
-                        <select
-                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                            value={bancoDestino}
-                            onChange={(e) => setBancoDestino(e.target.value)}
-                            required
-                        >
-                            <option value="">Seleccionar banco destino...</option>
-                            {banks.map((bank) => (
-                                <option key={bank.id} value={bank.nombre} disabled={bank.nombre === bancoOrigen}>
-                                    {bank.nombre}
-                                </option>
-                            ))}
-                        </select>
+                    <div className="flex gap-2">
+                        <div className="flex-1">
+                            <label className="block text-sm text-slate-400 mb-1">Hacia</label>
+                            <select
+                                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                value={bancoDestino}
+                                onChange={(e) => setBancoDestino(e.target.value)}
+                                required
+                            >
+                                <option value="">Banco destino...</option>
+                                {banks.map((bank) => (
+                                    <option key={bank.id} value={bank.nombre}>
+                                        {bank.nombre}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        {bancoDestino !== 'Efectivo' && (
+                            <div className="flex-1">
+                                <label className="block text-sm text-slate-400 mb-1">Cuenta destino</label>
+                                <select
+                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                    value={cuentaDestino}
+                                    onChange={(e) => setCuentaDestino(e.target.value)}
+                                    required={bancoDestino !== 'Efectivo'}
+                                >
+                                    <option value="">Seleccionar...</option>
+                                    {accounts.map(a => (
+                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                     </div>
 
                     {/* Amount */}
