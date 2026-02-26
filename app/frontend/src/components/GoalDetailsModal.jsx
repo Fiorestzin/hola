@@ -17,6 +17,8 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
     const [editAmount, setEditAmount] = useState('');
     const [editDate, setEditDate] = useState('');
     const [editBank, setEditBank] = useState('');
+    const [editAccount, setEditAccount] = useState('');
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
 
     // Tabs
     const [activeTab, setActiveTab] = useState('history'); // 'history' | 'plan'
@@ -31,6 +33,7 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
         if (isOpen && goal) {
             fetchHistory();
             fetchBanks();
+            fetchBankAccountsMap();
         }
     }, [isOpen, goal, environment]);
 
@@ -63,6 +66,15 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
         }
     };
 
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) setBankAccountsMap(await res.json());
+        } catch (e) {
+            console.error("Failed to fetch bank accounts map", e);
+        }
+    };
+
     const handleDelete = async (tx) => {
         if (!confirm(`¿Seguro que quieres eliminar este ${tx.tipo.toLowerCase()}?`)) return;
 
@@ -86,6 +98,7 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
         setEditAmount(Math.abs(tx.monto).toString());
         setEditDate(tx.fecha);
         setEditBank(tx.banco || '');
+        setEditAccount(tx.cuenta || '');
     };
 
     const handleUpdate = async () => {
@@ -107,7 +120,8 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
                 body: JSON.stringify({
                     monto: parseFloat(editAmount),
                     fecha: editDate,
-                    banco: editBank
+                    banco: editBank,
+                    cuenta: editAccount || 'Principal'
                 })
             });
             if (res.ok) {
@@ -188,6 +202,8 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
     const schedule = useMemo(() => {
         if (!goal || !goal.frecuencia_aporte || !goal.monto_objetivo) return [];
 
+        const freq = goal.frecuencia_aporte.toLowerCase();
+
         // 1. Determine Start Date and Total Slots
         // Use created_at or fallback to today. 
         // Note: new Date(goal.created_at) might be invalid if format is weird.
@@ -213,9 +229,9 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
         let safety = 0;
 
         // Advance to first valid slot
-        if (goal.frecuencia_aporte === 'Diario') {
+        if (freq === 'diario') {
             currentDate.setDate(currentDate.getDate() + 1);
-        } else if (goal.frecuencia_aporte === 'Semanal') {
+        } else if (freq === 'semanal') {
             const targetDay = parseInt(goal.dia_aporte);
             if (targetDay) {
                 let day = currentDate.getDay() || 7;
@@ -225,7 +241,7 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
             } else {
                 currentDate.setDate(currentDate.getDate() + 7);
             }
-        } else if (goal.frecuencia_aporte === 'Mensual') {
+        } else if (freq === 'mensual') {
             const targetDay = parseInt(goal.dia_aporte);
             if (targetDay) {
                 if (currentDate.getDate() >= targetDay) {
@@ -237,16 +253,16 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
             }
         }
 
-        while (currentDate <= endDate && safety < 1000) {
+        while (currentDate <= endDate && safety < 10000) {
             idealSlots.push(new Date(currentDate));
             safety++;
 
             // Advance
-            if (goal.frecuencia_aporte === 'Diario') {
+            if (freq === 'diario') {
                 currentDate.setDate(currentDate.getDate() + 1);
-            } else if (goal.frecuencia_aporte === 'Semanal') {
+            } else if (freq === 'semanal') {
                 currentDate.setDate(currentDate.getDate() + 7);
-            } else if (goal.frecuencia_aporte === 'Mensual') {
+            } else if (freq === 'mensual') {
                 currentDate.setMonth(currentDate.getMonth() + 1);
             } else {
                 break;
@@ -256,7 +272,7 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
         if (idealSlots.length === 0) return [];
 
         // 3. Calculate Fixed Quota Amount
-        const fixedQuotaParams = Math.ceil(goal.monto_objetivo / idealSlots.length);
+        const fixedQuotaParams = Math.max(1, Math.ceil(goal.monto_objetivo / idealSlots.length));
 
         // 4. Fill Buckets with Current Savings
         let remainingSavings = goal.monto_actual;
@@ -472,13 +488,33 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
                                                                 </span>
                                                             </td>
                                                             <td className="p-3">
-                                                                <input
-                                                                    type="text"
-                                                                    className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-full"
-                                                                    value={editBank}
-                                                                    onChange={(e) => setEditBank(e.target.value)}
-                                                                    placeholder="Banco"
-                                                                />
+                                                                <div className="flex flex-col gap-1">
+                                                                    <select
+                                                                        className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-full"
+                                                                        value={editBank}
+                                                                        onChange={(e) => {
+                                                                            setEditBank(e.target.value);
+                                                                            setEditAccount('');
+                                                                        }}
+                                                                    >
+                                                                        <option value="">Banco...</option>
+                                                                        {banks.map(b => (
+                                                                            <option key={b.id || b.nombre} value={b.nombre}>{b.nombre}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                    {editBank && (bankAccountsMap[editBank] || []).length > 0 && (
+                                                                        <select
+                                                                            className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-white w-full"
+                                                                            value={editAccount}
+                                                                            onChange={(e) => setEditAccount(e.target.value)}
+                                                                        >
+                                                                            <option value="">Cuenta...</option>
+                                                                            {(bankAccountsMap[editBank] || []).map(acc => (
+                                                                                <option key={acc} value={acc}>{acc}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    )}
+                                                                </div>
                                                             </td>
                                                             <td className="p-3">
                                                                 <input
@@ -513,7 +549,7 @@ export default function GoalDetailsModal({ isOpen, onClose, goal, environment = 
                                                             <td className="p-3 text-slate-300">
                                                                 <div className="flex items-center gap-1">
                                                                     {tx.detalle}
-                                                                    {tx.banco && <span className="text-slate-500 text-xs ml-1">({tx.banco})</span>}
+                                                                    {tx.banco && <span className="text-slate-500 text-xs ml-1">({tx.banco}{tx.cuenta && tx.cuenta !== 'Principal' ? ` - ${tx.cuenta}` : ''})</span>}
                                                                 </div>
                                                             </td>
                                                             <td className={`p-3 text-right font-bold ${tx.monto >= 0 ? 'text-emerald-400' : 'text-amber-400'

@@ -5,10 +5,10 @@ import GoalDetailsModal from './GoalDetailsModal';
 import { useSnackbar } from '../context/SnackbarContext';
 
 // Preset icons for goals
-const GOAL_ICONS = ['🎯', '✈️', '🏠', '🚗', '💻', '📚', '🎓', '💍', '🏖️', '💰', '🎸', '🏋️'];
-const GOAL_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+const GOAL_ICONS = ['🎯', '✈️', '🚗', '🏠', '�', '🎓', '�', '�', '�', '📱'];
+const GOAL_COLORS = ['#ef4444', '#f97316', '#f59e0b', '#84cc16', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#f43f5e'];
 
-export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST", onGoalChange }) {
+export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST", onGoalChange, banksData = [] }) {
     const { showSnackbar } = useSnackbar();
     const [goals, setGoals] = useState([]);
     const [banks, setBanks] = useState([]);
@@ -21,6 +21,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
     const [contributingGoal, setContributingGoal] = useState(null);
     const [contributionAmount, setContributionAmount] = useState('');
     const [contributionBank, setContributionBank] = useState('');
+    const [contributionAccount, setContributionAccount] = useState('');
 
     // Withdrawal state
     const [withdrawingGoal, setWithdrawingGoal] = useState(null);
@@ -29,6 +30,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         motivo: '',
         categoria: '',
         banco: '',
+        cuenta: '',
         fecha_limite_reponer: ''
     });
     const [pendingWithdrawals, setPendingWithdrawals] = useState({});
@@ -38,6 +40,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
     const [executionData, setExecutionData] = useState({
         monto: '',
         banco: '',
+        cuenta: '',
         categoria: '',
         detalle: '',
         fecha: new Date().toISOString().split('T')[0]
@@ -51,6 +54,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
     const [goalBanks, setGoalBanks] = useState([]); // Banks with contributions to current goal
     const [positiveBanks, setPositiveBanks] = useState([]); // Banks with positive balance for new contributions
     const [selectedGoal, setSelectedGoal] = useState(null); // For Detail Modal
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
 
     // Form state
     const [formData, setFormData] = useState({
@@ -70,6 +74,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             fetchPositiveBanks();
             fetchCategories();
             fetchPendingWithdrawals();
+            fetchBankAccountsMap();
             resetForm();
         }
     }, [isOpen, environment]);
@@ -170,6 +175,18 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         }
     };
 
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setBankAccountsMap(data);
+            }
+        } catch (error) {
+            console.error("Error loading bank accounts map:", error);
+        }
+    };
+
     const fetchPendingWithdrawals = async () => {
         try {
             const res = await fetch(`${API_URL}/savings-withdrawals/pending?environment=${environment}`);
@@ -214,6 +231,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     motivo: withdrawalData.motivo,
                     categoria: withdrawalData.categoria || 'Otros',
                     banco: withdrawalData.banco,
+                    cuenta: withdrawalData.cuenta,
                     fecha_limite_reponer: withdrawalData.fecha_limite_reponer
                 })
             });
@@ -221,7 +239,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                 fetchGoals();
                 fetchPendingWithdrawals();
                 setWithdrawingGoal(null);
-                setWithdrawalData({ monto: '', motivo: '', categoria: '', banco: '', fecha_limite_reponer: '' });
+                setWithdrawalData({ monto: '', motivo: '', categoria: '', banco: '', cuenta: '', fecha_limite_reponer: '' });
                 if (onGoalChange) onGoalChange();
             } else {
                 const err = await res.json();
@@ -265,8 +283,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
     };
 
     const handleExecuteGoal = async (goalId) => {
-        if (!executionData.monto || !executionData.banco || !executionData.categoria) {
-            alert("Por favor completa los campos obligatorios (monto, banco y categoría)");
+        if (!executionData.monto || !executionData.banco || !executionData.cuenta || !executionData.categoria) {
+            alert("Por favor completa los campos obligatorios (monto, banco, cuenta y categoría)");
             return;
         }
 
@@ -281,6 +299,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     categoria: executionData.categoria,
                     detalle: executionData.detalle || `Ejecución meta: ${executingGoal.nombre}`,
                     banco: executionData.banco,
+                    cuenta: executionData.cuenta,
                     monto: parseFloat(executionData.monto.toString().replace(/\D/g, '')),
                     environment
                 })
@@ -325,6 +344,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         setContributingGoal(null);
         setContributionAmount('');
         setContributionBank('');
+        setContributionAccount('');
         setExecutingGoal(null);
         setNotesGoal(null);
         setNotesData('');
@@ -335,15 +355,16 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         if (!formData.nombre || !formData.monto_objetivo) return;
 
         try {
+            const parsedDia = parseInt(formData.dia_aporte);
             const res = await fetch(`${API_URL}/savings-goals`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...formData,
-                    monto_objetivo: parseFloat(formData.monto_objetivo.replace(/\D/g, '')),
+                    monto_objetivo: parseFloat(formData.monto_objetivo.toString().replace(/\D/g, '')),
                     fecha_limite: formData.fecha_limite,
                     frecuencia_aporte: formData.frecuencia_aporte || null,
-                    dia_aporte: formData.dia_aporte ? parseInt(formData.dia_aporte) : null,
+                    dia_aporte: !isNaN(parsedDia) ? parsedDia : null,
                     environment
                 })
             });
@@ -362,6 +383,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         if (!formData.nombre || !formData.monto_objetivo) return;
 
         try {
+            const parsedDia = parseInt(formData.dia_aporte);
             const res = await fetch(`${API_URL}/savings-goals/${editingGoal.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -370,7 +392,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                     monto_objetivo: parseFloat(formData.monto_objetivo.toString().replace(/\D/g, '')),
                     fecha_limite: formData.fecha_limite,
                     frecuencia_aporte: formData.frecuencia_aporte || null,
-                    dia_aporte: formData.dia_aporte ? parseInt(formData.dia_aporte) : null,
+                    dia_aporte: !isNaN(parsedDia) ? parsedDia : null,
                     icono: formData.icono,
                     color: formData.color
                 })
@@ -439,7 +461,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     monto,
-                    banco: contributionBank || null
+                    banco: contributionBank || null,
+                    cuenta: contributionBank ? contributionAccount : 'Principal'
                 })
             });
 
@@ -448,6 +471,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                 setContributingGoal(null);
                 setContributionAmount('');
                 setContributionBank('');
+                setContributionAccount('');
                 fetchGoals(); // Refresh UI with new balance
                 if (onGoalChange) onGoalChange();
 
@@ -526,6 +550,8 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             return { status: 'none', nextQuota: null, nextDate: null };
         }
 
+        const freq = goal.frecuencia_aporte.toLowerCase();
+
         // Logic copied/adapted from GoalDetailsModal to ensure consistency
         const startDate = goal.created_at ? new Date(goal.created_at) : new Date();
         startDate.setHours(0, 0, 0, 0);
@@ -534,17 +560,16 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
         if (endDate <= startDate) return { status: 'none' }; // Invalid range or expired
 
         // Generate ideal slots
-        const idealSlots = [];
         let currentDate = new Date(startDate);
 
         // Initial Advance
-        if (goal.frecuencia_aporte === 'Diario') currentDate.setDate(currentDate.getDate() + 1);
-        else if (goal.frecuencia_aporte === 'Semanal') {
+        if (freq === 'diario') currentDate.setDate(currentDate.getDate() + 1);
+        else if (freq === 'semanal') {
             const targetDay = parseInt(goal.dia_aporte) || currentDate.getDay() || 7;
             let diff = targetDay - (currentDate.getDay() || 7);
             if (diff <= 0) diff += 7;
             currentDate.setDate(currentDate.getDate() + diff);
-        } else if (goal.frecuencia_aporte === 'Mensual') {
+        } else if (freq === 'mensual') {
             const targetDay = parseInt(goal.dia_aporte);
             if (targetDay) {
                 if (currentDate.getDate() >= targetDay) currentDate.setMonth(currentDate.getMonth() + 1);
@@ -554,48 +579,52 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
             }
         }
 
-        while (currentDate <= endDate) {
-            idealSlots.push(new Date(currentDate));
-            // Advance loop
-            if (goal.frecuencia_aporte === 'Diario') currentDate.setDate(currentDate.getDate() + 1);
-            else if (goal.frecuencia_aporte === 'Semanal') currentDate.setDate(currentDate.getDate() + 7);
-            else if (goal.frecuencia_aporte === 'Mensual') currentDate.setMonth(currentDate.getMonth() + 1);
+        // Calculate total ideal slots safely without array generation
+        let totalSlots = 0;
+        let tempDate = new Date(currentDate);
+        let limit = 0;
+
+        while (tempDate <= endDate && limit < 10000) {
+            totalSlots++;
+            limit++;
+            if (freq === 'diario') tempDate.setDate(tempDate.getDate() + 1);
+            else if (freq === 'semanal') tempDate.setDate(tempDate.getDate() + 7);
+            else if (freq === 'mensual') tempDate.setMonth(tempDate.getMonth() + 1);
             else break;
         }
 
-        if (idealSlots.length === 0) return { status: 'none' };
+        if (totalSlots === 0) return { status: 'none' };
 
-        const quotaAmount = Math.ceil(goal.monto_objetivo / idealSlots.length);
-        let remainingSavings = goal.monto_actual;
+        const quotaAmount = Math.max(1, Math.ceil(goal.monto_objetivo / totalSlots));
+        const paidSlotsCount = Math.floor(goal.monto_actual / quotaAmount);
 
-        // Find the first UNPAID or PARTIALLY PAID slot
-        for (let i = 0; i < idealSlots.length; i++) {
-            const slotDate = idealSlots[i];
-
-            if (remainingSavings >= quotaAmount) {
-                remainingSavings -= quotaAmount; // Fully paid, check next
-                continue;
-            }
-
-            // Found pending slot!
-            const remainingToPay = quotaAmount - remainingSavings;
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            let status = 'pending'; // Default: It's coming up
-            if (slotDate < today) status = 'late'; // It's in the past!
-            else status = 'ontrack'; // It's in the future
-
-            return {
-                status,
-                nextQuota: remainingToPay,
-                nextDate: slotDate.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }),
-                fullDate: slotDate
-            };
+        if (paidSlotsCount >= totalSlots) {
+            return { status: 'completed', nextQuota: 0, nextDate: null };
         }
 
-        // If loop finishes, all slots are covered!
-        return { status: 'completed', nextQuota: 0, nextDate: null };
+        // Calculate the exact date for the first UNPAID or PARTIALLY PAID slot
+        let slotDate = new Date(currentDate);
+        const loopLimit = Math.min(paidSlotsCount, 10000); // Safety limit
+        for (let i = 0; i < loopLimit; i++) {
+            if (freq === 'diario') slotDate.setDate(slotDate.getDate() + 1);
+            else if (freq === 'semanal') slotDate.setDate(slotDate.getDate() + 7);
+            else if (freq === 'mensual') slotDate.setMonth(slotDate.getMonth() + 1);
+        }
+
+        const remainingToPay = quotaAmount - (goal.monto_actual % quotaAmount);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let status = 'pending'; // Default: It's coming up
+        if (slotDate < today) status = 'late'; // It's in the past!
+        else status = 'ontrack'; // It's in the future
+
+        return {
+            status,
+            nextQuota: remainingToPay,
+            nextDate: slotDate.toLocaleDateString('es-CL', { day: 'numeric', month: 'short' }),
+            fullDate: slotDate
+        };
     };
 
     const formatMonto = (value) => {
@@ -966,6 +995,7 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                             setExecutionData({
                                                                 monto: goal.monto_actual.toLocaleString('es-CL'),
                                                                 banco: '',
+                                                                cuenta: '',
                                                                 categoria: '',
                                                                 detalle: `Compra: ${goal.nombre}`,
                                                                 fecha: new Date().toISOString().split('T')[0]
@@ -1049,28 +1079,60 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                             <span>Nuevo Aporte</span>
                                                             {status === 'late' && <span className='text-red-400 animate-pulse'>¡Cuota Atrasada!</span>}
                                                         </div>
-                                                        <div className="flex gap-2">
+                                                        <div className="flex flex-wrap gap-2">
                                                             <input
                                                                 type="text"
-                                                                className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
+                                                                className="flex-1 min-w-[100px] bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
                                                                 placeholder="Monto"
                                                                 value={contributionAmount}
                                                                 onChange={(e) => setContributionAmount(formatMonto(e.target.value))}
                                                                 autoFocus
                                                             />
                                                             <select
-                                                                className="flex-1 bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
+                                                                className="flex-1 min-w-[120px] bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
                                                                 value={contributionBank}
-                                                                onChange={(e) => setContributionBank(e.target.value)}
+                                                                onChange={(e) => {
+                                                                    setContributionBank(e.target.value);
+                                                                    setContributionAccount('');
+                                                                }}
                                                             >
                                                                 <option value="">Selecciona Banco</option>
                                                                 {positiveBanks.map(b => (
                                                                     <option key={b.id} value={b.nombre}>{b.nombre} ({fmt(b.saldo)})</option>
                                                                 ))}
                                                             </select>
+                                                            {contributionBank && (() => {
+                                                                // Use banksData to get balances if possible
+                                                                const bankDetailedInfo = banksData.find(b => b.banco === contributionBank);
+                                                                let accountList = [];
+
+                                                                if (bankDetailedInfo && bankDetailedInfo.accounts) {
+                                                                    accountList = bankDetailedInfo.accounts.map(a => ({
+                                                                        nombre: a.cuenta,
+                                                                        saldoInfo: `(${fmt(a.saldo)})`
+                                                                    }));
+                                                                } else {
+                                                                    // Fallback to basic map if banksData is missing/empty
+                                                                    const assignedAccounts = bankAccountsMap[contributionBank] || [];
+                                                                    accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                                                                }
+
+                                                                return (
+                                                                    <select
+                                                                        className="flex-1 min-w-[120px] bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-white focus:border-emerald-500 outline-none"
+                                                                        value={contributionAccount}
+                                                                        onChange={(e) => setContributionAccount(e.target.value)}
+                                                                    >
+                                                                        <option value="">Cuenta...</option>
+                                                                        {accountList.map(a => (
+                                                                            <option key={a.nombre} value={a.nombre}>{a.nombre} {a.saldoInfo}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                );
+                                                            })()}
                                                             <button
                                                                 onClick={() => handleContribute(goal.id)}
-                                                                className="bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-colors"
+                                                                className="bg-emerald-600 hover:bg-emerald-500 text-white p-1.5 rounded transition-colors flex items-center justify-center"
                                                             >
                                                                 <Check size={16} />
                                                             </button>
@@ -1082,18 +1144,34 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                     <div className="flex flex-col gap-2">
                                                         <div className="text-xs font-bold text-amber-400 mb-1">Retirar Fondos de Meta (Préstamo)</div>
 
-                                                        {/* Step 1: Banco y Monto */}
-                                                        <div className="grid grid-cols-2 gap-2">
+                                                        {/* Step 1: Banco, Cuenta y Monto */}
+                                                        <div className="grid grid-cols-3 gap-2">
                                                             <select
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
                                                                 value={withdrawalData.banco}
-                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, banco: e.target.value })}
+                                                                onChange={(e) => setWithdrawalData({ ...withdrawalData, banco: e.target.value, cuenta: '' })}
                                                             >
-                                                                <option value="">Origen...</option>
+                                                                <option value="">Banco...</option>
                                                                 {goalBanks.map(b => (
                                                                     <option key={b.banco} value={b.banco}>{b.banco} ({fmt(b.total || 0)})</option>
                                                                 ))}
                                                             </select>
+                                                            {withdrawalData.banco && (() => {
+                                                                const assignedAccounts = bankAccountsMap[withdrawalData.banco] || [];
+                                                                const accountList = assignedAccounts.map(name => ({ nombre: name }));
+                                                                return (
+                                                                    <select
+                                                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                        value={withdrawalData.cuenta}
+                                                                        onChange={(e) => setWithdrawalData({ ...withdrawalData, cuenta: e.target.value })}
+                                                                    >
+                                                                        <option value="">Cuenta...</option>
+                                                                        {accountList.map(a => (
+                                                                            <option key={a.nombre} value={a.nombre}>{a.nombre}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                );
+                                                            })()}
                                                             <input
                                                                 type="text"
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
@@ -1150,17 +1228,33 @@ export default function SavingsGoalsModal({ isOpen, onClose, environment = "TEST
                                                             />
                                                         </div>
 
-                                                        <div className="grid grid-cols-2 gap-2">
+                                                        <div className="grid grid-cols-3 gap-2">
                                                             <select
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
                                                                 value={executionData.banco}
-                                                                onChange={(e) => setExecutionData({ ...executionData, banco: e.target.value })}
+                                                                onChange={(e) => setExecutionData({ ...executionData, banco: e.target.value, cuenta: '' })}
                                                             >
                                                                 <option value="">Banco Pago...</option>
                                                                 {positiveBanks.map(b => (
                                                                     <option key={b.id} value={b.nombre}>{b.nombre}</option>
                                                                 ))}
                                                             </select>
+                                                            {executionData.banco && (() => {
+                                                                const assignedAccounts = bankAccountsMap[executionData.banco] || [];
+                                                                const accountList = assignedAccounts.map(name => ({ nombre: name }));
+                                                                return (
+                                                                    <select
+                                                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
+                                                                        value={executionData.cuenta}
+                                                                        onChange={(e) => setExecutionData({ ...executionData, cuenta: e.target.value })}
+                                                                    >
+                                                                        <option value="">Cuenta...</option>
+                                                                        {accountList.map(a => (
+                                                                            <option key={a.nombre} value={a.nombre}>{a.nombre}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                );
+                                                            })()}
                                                             <select
                                                                 className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white outline-none"
                                                                 value={executionData.categoria}

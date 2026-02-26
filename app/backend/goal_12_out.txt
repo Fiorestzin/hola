@@ -1,0 +1,16 @@
+Contributions:
+(40, 2349.0, 'Scotiabank', 'Cuenta de Ahorro')
+(42, 40000.0, 'Scotiabank', 'Cuenta de Ahorro')
+(43, 400000.0, 'Scotiabank', 'Cuenta de Ahorro')
+(44, 7600.0, 'Scotiabank', 'Cuenta de Ahorro')
+(45, 53.0, 'Scotiabank', 'Cuenta de Ahorro')
+(49, 1006.0, 'Scotiabank', 'Cuenta de Ahorro')
+(50, 1.0, 'Scotiabank', 'Cuenta de Ahorro')
+(51, 2.0, 'Scotiabank', 'Cuenta de Ahorro')
+(52, 1.0, 'Scotiabank', 'Cuenta de Ahorro')
+(53, 3.0, 'Scotiabank', 'Cuenta de Ahorro')
+(54, 1.0, 'Scotiabank', 'Cuenta de Ahorro')
+(55, 1.0, 'Scotiabank', 'Cuenta de Ahorro')
+(56, 3.0, 'Scotiabank', 'Cuenta de Ahorro')
+(57, 233722.0, 'Scotiabank', 'Cuenta de Ahorro')
+Withdrawals:

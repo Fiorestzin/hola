@@ -5,6 +5,7 @@ import { API_URL } from "../config";
 export default function AccountMigratorModal({ isOpen, onClose, environment = "TEST", onMigrationComplete }) {
     const [banks, setBanks] = useState([]);
     const [accounts, setAccounts] = useState([]);
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
 
     const [banco, setBanco] = useState('');
     const [cuentaOrigen, setCuentaOrigen] = useState('');
@@ -18,6 +19,7 @@ export default function AccountMigratorModal({ isOpen, onClose, environment = "T
         if (isOpen) {
             fetchBanks();
             fetchAccounts();
+            fetchBankAccountsMap();
             setBanco('');
             setCuentaOrigen('Principal');
             setCuentaDestino('');
@@ -41,6 +43,18 @@ export default function AccountMigratorModal({ isOpen, onClose, environment = "T
             if (res.ok) setAccounts(await res.json());
         } catch (error) {
             console.error("Error loading accounts:", error);
+        }
+    };
+
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setBankAccountsMap(data);
+            }
+        } catch (error) {
+            console.error("Error loading bank accounts map:", error);
         }
     };
 
@@ -124,7 +138,10 @@ export default function AccountMigratorModal({ isOpen, onClose, environment = "T
                         <select
                             className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-amber-500"
                             value={banco}
-                            onChange={(e) => setBanco(e.target.value)}
+                            onChange={(e) => {
+                                setBanco(e.target.value);
+                                setCuentaDestino('');
+                            }}
                             required
                         >
                             <option value="">Seleccionar banco...</option>
@@ -163,8 +180,8 @@ export default function AccountMigratorModal({ isOpen, onClose, environment = "T
                                 required
                             >
                                 <option value="">Seleccionar...</option>
-                                {accounts.map(a => (
-                                    <option key={a.id} value={a.nombre}>{a.nombre}</option>
+                                {banco && (bankAccountsMap[banco] || []).map(a => (
+                                    <option key={a} value={a}>{a}</option>
                                 ))}
                             </select>
                         </div>

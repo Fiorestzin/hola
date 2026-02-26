@@ -4,7 +4,7 @@ import { API_URL } from "../config";
 // force refresh mechanism
 
 
-export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', environment = 'TEST' }) {
+export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', environment = 'TEST', initialData = null, banksData = [] }) {
     if (!isOpen) return null;
 
     const [formData, setFormData] = useState({
@@ -13,8 +13,37 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
         categoria: '',
         detalle: '',
         banco: 'Efectivo', // Default
-        cuenta: ''
+        cuenta: '',
+        budget_item_id: null
     });
+
+    useEffect(() => {
+        if (isOpen && initialData) {
+            setFormData(prev => ({
+                ...prev,
+                monto: initialData.monto?.toString() || '',
+                categoria: initialData.categoria || '',
+                detalle: initialData.detalle || '',
+                banco: initialData.banco || 'Efectivo',
+                cuenta: initialData.cuenta || '',
+                budget_item_id: initialData.budget_item_id || null
+                // We leave fecha as today by default, or could use initialData.fecha if we had one
+            }));
+        } else if (isOpen) {
+            // Reset to defaults if opening without initial data
+            setFormData({
+                fecha: new Date().toISOString().split('T')[0],
+                monto: '',
+                categoria: '',
+                detalle: '',
+                banco: 'Efectivo',
+                cuenta: '',
+                budget_item_id: null
+            });
+            setIsNetMode(false);
+            setNetAmount('');
+        }
+    }, [isOpen, initialData]);
 
     // Net/Gross Calculator State
     const [isNetMode, setIsNetMode] = useState(false);
@@ -25,6 +54,7 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
     const [categories, setCategories] = useState([]);
     const [banks, setBanks] = useState([]);
     const [accounts, setAccounts] = useState([]);
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
 
     useEffect(() => {
         if (isOpen) {
@@ -46,6 +76,11 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                         setFormData(prev => ({ ...prev, cuenta: data[0].nombre }));
                     }
                 })
+                .catch(err => console.error(err));
+
+            fetch(`${API_URL}/bank-accounts/all?environment=${environment}`)
+                .then(res => res.json())
+                .then(data => setBankAccountsMap(data))
                 .catch(err => console.error(err));
         }
     }, [isOpen, environment]);
@@ -76,6 +111,8 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
+
+    const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -212,21 +249,34 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                                 ))}
                             </select>
                         </div>
-                        {formData.banco !== 'Efectivo' && (
-                            <div>
-                                <label className="block text-sm text-slate-400 mb-1">Cuenta</label>
-                                <select
-                                    name="cuenta"
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
-                                    value={formData.cuenta}
-                                    onChange={handleChange}
-                                >
-                                    {accounts.map(a => (
-                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
+                        {formData.banco !== 'Efectivo' && (() => {
+                            const bankInfo = banksData.find(b => b.banco === formData.banco);
+                            let accountList = [];
+                            if (bankInfo && bankInfo.accounts) {
+                                accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                            } else {
+                                const assignedAccounts = bankAccountsMap[formData.banco] || [];
+                                accountList = assignedAccounts.length > 0
+                                    ? assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }))
+                                    : accounts.map(a => ({ nombre: a.nombre, saldoInfo: '' }));
+                            }
+
+                            return (
+                                <div>
+                                    <label className="block text-sm text-slate-400 mb-1">Cuenta</label>
+                                    <select
+                                        name="cuenta"
+                                        className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white"
+                                        value={formData.cuenta}
+                                        onChange={handleChange}
+                                    >
+                                        {accountList.map(a => (
+                                            <option key={a.nombre} value={a.nombre}>{a.nombre} {a.saldoInfo}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     <div>

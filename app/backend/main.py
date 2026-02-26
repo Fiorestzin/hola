@@ -10,7 +10,7 @@ import os
 from jose import JWTError, jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
-from typing import Optional
+from typing import Optional, List
 
 # PostgreSQL support
 try:
@@ -156,6 +156,29 @@ def init_budgets_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+    
+    # --- Migrations for budgets table ---
+    migration_columns = [
+        ("nombre", "TEXT DEFAULT 'General'"),
+        ("banco_designado", "TEXT"),
+        ("cuenta_designada", "TEXT"),
+        ("fecha_pago", "TEXT"),
+        ("frecuencia", "TEXT DEFAULT 'unavez'"),
+        ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    ]
+    for col_name, col_type in migration_columns:
+        try:
+            cursor.execute(f"ALTER TABLE budgets ADD COLUMN {col_name} {col_type}")
+            print(f"Migration: Added column '{col_name}' to budgets")
+        except Exception:
+            pass  # Column already exists
+
+    # Migrate old repetir_mensual data to frecuencia
+    try:
+        cursor.execute(sql_param("UPDATE budgets SET frecuencia = 'mensual' WHERE repetir_mensual = 1 AND (frecuencia IS NULL OR frecuencia = 'unavez')"))
+        print("Migration: Migrated repetir_mensual -> frecuencia")
+    except Exception:
+        pass  # repetir_mensual column might not exist
     
     # Seed Categories if empty
     try:
@@ -787,6 +810,7 @@ class Transaction(BaseModel):
     cuenta: str = None
     monto: float
     environment: str = "PROD"  # TEST (demo) or PROD (real)
+    budget_item_id: Optional[int] = None
 
 @app.post("/transaction")
 def create_transaction(tx: Transaction):
@@ -803,11 +827,11 @@ def create_transaction(tx: Transaction):
         gasto = monto_abs
         
     try:
-        print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}")
+        print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}, budget_item={tx.budget_item_id}")
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo,categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, tx.cuenta, ingreso, gasto, monto_abs, tx.environment))
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment, budget_item_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, tx.cuenta, ingreso, gasto, monto_abs, tx.environment, tx.budget_item_id))
         
         conn.commit()
         
@@ -854,6 +878,7 @@ class TransactionUpdate(BaseModel):
     banco: str = None
     cuenta: str = None
     monto: float = None
+    budget_item_id: Optional[int] = None
 
 @app.put("/transaction/{tx_id}")
 def update_transaction(tx_id: int, tx: TransactionUpdate):
@@ -906,6 +931,10 @@ def update_transaction(tx_id: int, tx: TransactionUpdate):
             params.append(0)
             updates.append("gasto = ?")
             params.append(monto_abs)
+    
+    if hasattr(tx, 'budget_item_id') and tx.budget_item_id is not None:
+        updates.append("budget_item_id = ?")
+        params.append(tx.budget_item_id)
     
     if not updates:
         conn.close()
@@ -1029,6 +1058,11 @@ def init_db():
             cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS cuenta TEXT DEFAULT 'Principal'")
         except:
             pass
+
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'TEST'")
+        except:
+            pass
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS budgets (
@@ -1036,16 +1070,37 @@ def init_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL,
-                environment TEXT DEFAULT 'TEST',
-                UNIQUE(category, month, environment)
+                environment TEXT DEFAULT 'PROD',
+                banco_designado TEXT,
+                fecha_pago TEXT,
+                repetir_mensual INTEGER DEFAULT 0,
+                frecuencia TEXT DEFAULT 'unavez',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         
-        # Migration: Add environment column to budgets if it doesn't exist
+        # Migration: Add new columns to budgets if they don't exist
         try:
             cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'TEST'")
-        except:
-            pass  # Column already exists
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS banco_designado TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS cuenta_designada TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS fecha_pago TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS repetir_mensual INTEGER DEFAULT 0")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS frecuencia TEXT DEFAULT 'unavez'")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        except: pass
         
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS categories (
@@ -1133,7 +1188,8 @@ def init_db():
                 goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
                 monto REAL NOT NULL,
                 fecha TEXT NOT NULL,
-                banco TEXT
+                banco TEXT,
+                cuenta TEXT DEFAULT 'Principal'
             )
         ''')
         
@@ -1146,6 +1202,7 @@ def init_db():
                 motivo TEXT,
                 categoria TEXT,
                 banco TEXT,
+                cuenta TEXT DEFAULT 'Principal',
                 fecha TEXT NOT NULL,
                 fecha_limite_reponer TEXT NOT NULL,
                 repuesto BOOLEAN DEFAULT FALSE,
@@ -1188,6 +1245,77 @@ def init_db():
             cursor.execute("ALTER TABLE savings_goals ADD COLUMN IF NOT EXISTS notas TEXT DEFAULT NULL")
         except:
             pass  # Column already exists
+            
+        # Migration: Add cuenta column to savings if it doesn't exist
+        try:
+            cursor.execute("ALTER TABLE savings_contributions ADD COLUMN IF NOT EXISTS cuenta TEXT DEFAULT 'Principal'")
+        except:
+            pass
+        try:
+            cursor.execute("ALTER TABLE savings_withdrawals ADD COLUMN IF NOT EXISTS cuenta TEXT DEFAULT 'Principal'")
+        except:
+            pass
+            
+        # Migration: Create budget_items table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budget_items (
+                id SERIAL PRIMARY KEY,
+                budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,
+                nombre TEXT NOT NULL,
+                monto REAL NOT NULL,
+                fecha_pago INTEGER DEFAULT NULL,
+                environment TEXT DEFAULT 'PROD'
+            )
+        ''')
+        
+        # Migration: Add budget_item_id to transactions
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS budget_item_id INTEGER DEFAULT NULL")
+        except:
+            pass
+
+        # --- bank_accounts: Junction table linking banks to their accounts ---
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bank_accounts (
+                id SERIAL PRIMARY KEY,
+                bank_name TEXT NOT NULL,
+                account_name TEXT NOT NULL,
+                environment TEXT DEFAULT 'PROD',
+                UNIQUE(bank_name, account_name, environment)
+            )
+        ''')
+
+        # Auto-populate and Legacy Migration for PostgreSQL
+        try:
+            cursor.execute("SELECT COUNT(*) FROM bank_accounts")
+            if cursor.fetchone()[0] == 0:
+                print("Migration [PG]: Auto-populating bank_accounts and migrating legacy balances...")
+                
+                # 1. Ensure "Principal" account exists
+                cursor.execute(sql_param("INSERT INTO accounts (nombre, environment) VALUES ('Principal', 'PROD') ON CONFLICT DO NOTHING"))
+                
+                # 2. Assign "Principal" to any transaction that has a bank but no account
+                cursor.execute(sql_param('''
+                    UPDATE transactions 
+                    SET cuenta = 'Principal' 
+                    WHERE banco IS NOT NULL AND banco != '' 
+                      AND (cuenta IS NULL OR cuenta = '')
+                '''))
+                
+                # 3. Populate bank_accounts from all valid transactions (which now includes 'Principal')
+                cursor.execute(sql_param('''
+                    INSERT INTO bank_accounts (bank_name, account_name, environment)
+                    SELECT DISTINCT banco, cuenta, 'PROD'
+                    FROM transactions
+                    WHERE banco IS NOT NULL AND banco != ''
+                      AND cuenta IS NOT NULL AND cuenta != ''
+                    ON CONFLICT DO NOTHING
+                '''))
+                
+                print(f"Migration [PG]: bank_accounts populated and legacy balances moved to 'Principal'")
+        except Exception as e:
+            print(f"bank_accounts PG migration note: {e}")
+
     else:
         # SQLite syntax
         cursor.execute('''
@@ -1223,8 +1351,11 @@ def init_db():
                 category TEXT NOT NULL,
                 amount REAL NOT NULL,
                 month TEXT NOT NULL,
-                environment TEXT DEFAULT 'TEST',
-                UNIQUE(category, month, environment)
+                environment TEXT DEFAULT 'PROD',
+                banco_designado TEXT,
+                fecha_pago TEXT,
+                repetir_mensual INTEGER DEFAULT 0,
+                created_at TIMESTAMP
             )
         ''')
         
@@ -1339,7 +1470,8 @@ def init_db():
                 goal_id INTEGER REFERENCES savings_goals(id) ON DELETE CASCADE,
                 monto REAL NOT NULL,
                 fecha TEXT NOT NULL,
-                banco TEXT
+                banco TEXT,
+                cuenta TEXT DEFAULT 'Principal'
             )
         ''')
         
@@ -1352,6 +1484,7 @@ def init_db():
                 motivo TEXT,
                 categoria TEXT,
                 banco TEXT,
+                cuenta TEXT DEFAULT 'Principal',
                 fecha TEXT NOT NULL,
                 fecha_limite_reponer TEXT NOT NULL,
                 repuesto INTEGER DEFAULT 0,
@@ -1366,11 +1499,108 @@ def init_db():
                           ("admin", hashed_pwd, 1))
             print("Created default admin user: admin / fiorestzin")
             
+        # Migration: Add new columns to budgets if they don't exist
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN banco_designado TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN cuenta_designada TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN fecha_pago TEXT DEFAULT NULL")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN repetir_mensual INTEGER DEFAULT 0")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN frecuencia TEXT DEFAULT 'unavez'")
+            print("Migration (init_db): Added column 'frecuencia' to budgets")
+        except: pass
+        try:
+            cursor.execute("ALTER TABLE budgets ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            print("Migration (init_db): Added column 'created_at' to budgets")
+        except: pass
+
         # Migration: Add notas column to savings_goals if it doesn't exist
         try:
             cursor.execute("ALTER TABLE savings_goals ADD COLUMN notas TEXT DEFAULT NULL")
         except:
             pass  # Column already exists
+            
+        # Migration: Add cuenta column to savings if missing
+        try:
+            cursor.execute("ALTER TABLE savings_contributions ADD COLUMN cuenta TEXT DEFAULT 'Principal'")
+        except: pass
+        try:
+            cursor.execute("UPDATE savings_contributions SET cuenta = 'Principal' WHERE cuenta IS NULL OR cuenta = ''")
+        except: pass
+
+        try:
+            cursor.execute("ALTER TABLE savings_withdrawals ADD COLUMN cuenta TEXT DEFAULT 'Principal'")
+        except: pass
+        try:
+            cursor.execute("UPDATE savings_withdrawals SET cuenta = 'Principal' WHERE cuenta IS NULL OR cuenta = ''")
+        except: pass
+            
+        # Migration: Create budget_items table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS budget_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,
+                nombre TEXT NOT NULL,
+                monto REAL NOT NULL,
+                fecha_pago INTEGER DEFAULT NULL,
+                environment TEXT DEFAULT 'PROD'
+            )
+        ''')
+        
+        # Migration: Add budget_item_id to transactions
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN budget_item_id INTEGER DEFAULT NULL")
+        except:
+            pass
+
+        # --- bank_accounts: Junction table linking banks to their accounts ---
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bank_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank_name TEXT NOT NULL,
+                account_name TEXT NOT NULL,
+                environment TEXT DEFAULT 'PROD',
+                UNIQUE(bank_name, account_name, environment)
+            )
+        ''')
+
+        # Auto-populate and Legacy Migration
+        try:
+            cursor.execute("SELECT COUNT(*) FROM bank_accounts")
+            if cursor.fetchone()[0] == 0:
+                print("Migration: Auto-populating bank_accounts and migrating legacy balances...")
+                
+                # 1. Ensure "Principal" account exists
+                cursor.execute(sql_param("INSERT OR IGNORE INTO accounts (nombre, environment) VALUES ('Principal', 'PROD')"))
+                
+                # 2. Assign "Principal" to any transaction that has a bank but no account
+                cursor.execute(sql_param('''
+                    UPDATE transactions 
+                    SET cuenta = 'Principal' 
+                    WHERE banco IS NOT NULL AND banco != '' 
+                      AND (cuenta IS NULL OR cuenta = '')
+                '''))
+                
+                # 3. Populate bank_accounts from all valid transactions (which now includes 'Principal')
+                cursor.execute(sql_param('''
+                    INSERT OR IGNORE INTO bank_accounts (bank_name, account_name, environment)
+                    SELECT DISTINCT banco, cuenta, 'PROD'
+                    FROM transactions
+                    WHERE banco IS NOT NULL AND banco != ''
+                      AND cuenta IS NOT NULL AND cuenta != ''
+                '''))
+                
+                print(f"Migration: bank_accounts populated and legacy balances moved to 'Principal'")
+        except Exception as e:
+            print(f"bank_accounts migration note: {e}")
+
     
     conn.commit()
     conn.close()
@@ -1573,6 +1803,77 @@ def delete_account(acc_id: int):
     conn.close()
     return {"status": "ok", "message": "Account deleted"}
 
+
+# --- Bank-Account Relationships ---
+
+class BankAccountAssign(BaseModel):
+    account_name: str
+    environment: str = 'PROD'
+
+@app.get("/banks/{bank_name}/accounts")
+def get_bank_accounts(bank_name: str, environment: str = "PROD"):
+    """Get accounts assigned to a specific bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param(
+        "SELECT id, bank_name, account_name FROM bank_accounts WHERE bank_name = ? AND environment = ? ORDER BY account_name"
+    ), (bank_name, environment))
+    rows = cursor.fetchall()
+    conn.close()
+    if USE_POSTGRES:
+        return [{"id": row[0], "bank_name": row[1], "account_name": row[2]} for row in rows]
+    return [dict(row) for row in rows]
+
+@app.post("/banks/{bank_name}/accounts")
+def assign_account_to_bank(bank_name: str, data: BankAccountAssign):
+    """Assign an account to a bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql_param(
+            "INSERT INTO bank_accounts (bank_name, account_name, environment) VALUES (?, ?, ?)"
+        ), (bank_name, data.account_name, data.environment))
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Already assigned or error: {e}")
+    conn.close()
+    return {"status": "ok", "message": f"Account '{data.account_name}' assigned to '{bank_name}'"}
+
+@app.delete("/banks/{bank_name}/accounts/{account_name}")
+def unassign_account_from_bank(bank_name: str, account_name: str, environment: str = "PROD"):
+    """Remove an account assignment from a bank."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param(
+        "DELETE FROM bank_accounts WHERE bank_name = ? AND account_name = ? AND environment = ?"
+    ), (bank_name, account_name, environment))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": f"Account '{account_name}' unassigned from '{bank_name}'"}
+
+@app.get("/bank-accounts/all")
+def get_all_bank_accounts(environment: str = "PROD"):
+    """Get all bank-account relationships for the environment (used by frontend selectors)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(sql_param(
+        "SELECT bank_name, account_name FROM bank_accounts WHERE environment = ? ORDER BY bank_name, account_name"
+    ), (environment,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    # Return grouped: { "Santander": ["Cuenta Corriente", "Visa"], ... }
+    result = {}
+    for row in rows:
+        bank = row[0] if USE_POSTGRES else row['bank_name']
+        acct = row[1] if USE_POSTGRES else row['account_name']
+        if bank not in result:
+            result[bank] = []
+        result[bank].append(acct)
+    return result
+
+
 @app.get("/banks/with-balance")
 def get_banks_with_balance(environment: str = "PROD"):
     """Get banks that have a positive calculated balance (Income - Expenses)."""
@@ -1613,165 +1914,6 @@ def get_banks_with_balance(environment: str = "PROD"):
             
     conn.close()
     return positive_banks
-
-
-
-# --- Budget Management ---
-
-class Budget(BaseModel):
-    category: str
-    amount: float
-    month: str  # YYYY-MM
-    environment: str = "PROD"
-
-class BudgetUpdate(BaseModel):
-    category: str = None
-    amount: float = None
-    month: str = None
-
-@app.get("/budgets")
-def get_budgets(month: str = None, environment: str = "PROD"):
-    """Get all budgets for the given environment, optionally filtered by month."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = "SELECT id, category, amount, month, environment FROM budgets WHERE environment = ?"
-    params = [environment]
-    
-    if month:
-        query += " AND month = ?"
-        params.append(month)
-        
-    query += " ORDER BY month DESC, category ASC"
-    cursor.execute(sql_param(query), params)
-    rows = cursor.fetchall()
-    
-    # Calculate progress for each budget
-    budgets_with_progress = []
-    for r in rows:
-        if USE_POSTGRES:
-            b = {"id": r[0], "category": r[1], "amount": r[2], "month": r[3], "environment": r[4]}
-        else:
-            b = dict(r)
-        
-        cat = b['category']
-        m = b['month']
-        
-        # SQL to sum expenses - use TO_CHAR for PostgreSQL, strftime for SQLite
-        if USE_POSTGRES:
-            sum_query = '''
-                SELECT COALESCE(SUM(gasto), 0) 
-                FROM transactions 
-                WHERE categoria = %s AND TO_CHAR(fecha::date, 'YYYY-MM') = %s AND environment = %s
-            '''
-        else:
-            sum_query = '''
-                SELECT COALESCE(SUM(gasto), 0) 
-                FROM transactions 
-                WHERE categoria = ? AND strftime('%Y-%m', fecha) = ? AND environment = ?
-            '''
-        cursor.execute(sum_query, (cat, m, environment))
-        spent = cursor.fetchone()[0] or 0
-        b['spent'] = spent
-        b['percentage'] = round((spent / b['amount']) * 100, 1) if b['amount'] > 0 else 0
-        b['remaining'] = max(0, b['amount'] - spent)
-        b['exceeded'] = spent > b['amount']
-        budgets_with_progress.append(b)
-        
-    conn.close()
-    return budgets_with_progress
-
-@app.post("/budgets")
-def create_budget(budget: Budget):
-    """Create a new budget or update if category+month+environment already exists."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    try:
-        # UPSERT: PostgreSQL uses ON CONFLICT, SQLite uses INSERT OR REPLACE
-        if USE_POSTGRES:
-            cursor.execute('''
-                INSERT INTO budgets (category, amount, month, environment)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (category, month, environment) DO UPDATE SET amount = EXCLUDED.amount
-            ''', (budget.category, budget.amount, budget.month, budget.environment))
-        else:
-            # For SQLite, check if exists first then update or insert
-            cursor.execute(sql_param('''
-                SELECT id FROM budgets WHERE category = ? AND month = ? AND environment = ?
-            '''), (budget.category, budget.month, budget.environment))
-            existing = cursor.fetchone()
-            
-            if existing:
-                cursor.execute(sql_param('''
-                    UPDATE budgets SET amount = ? WHERE id = ?
-                '''), (budget.amount, existing[0]))
-            else:
-                cursor.execute(sql_param('''
-                    INSERT INTO budgets (category, amount, month, environment)
-                    VALUES (?, ?, ?, ?)
-                '''), (budget.category, budget.amount, budget.month, budget.environment))
-        conn.commit()
-    except Exception as e:
-        conn.close()
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    conn.close()
-    return {"status": "ok", "message": "Presupuesto guardado correctamente"}
-
-@app.put("/budgets/{budget_id}")
-def update_budget(budget_id: int, budget: BudgetUpdate):
-    """Update an existing budget by ID."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Check if exists
-    cursor.execute(sql_param("SELECT id FROM budgets WHERE id = ?"), (budget_id,))
-    if not cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
-    
-    # Build dynamic update query
-    updates = []
-    params = []
-    
-    if budget.category is not None:
-        updates.append("category = ?")
-        params.append(budget.category)
-    if budget.amount is not None:
-        updates.append("amount = ?")
-        params.append(budget.amount)
-    if budget.month is not None:
-        updates.append("month = ?")
-        params.append(budget.month)
-    
-    if not updates:
-        conn.close()
-        return {"status": "ok", "message": "No hay cambios que aplicar"}
-    
-    params.append(budget_id)
-    query = f"UPDATE budgets SET {', '.join(updates)} WHERE id = ?"
-    cursor.execute(sql_param(query), params)
-    conn.commit()
-    conn.close()
-    
-    return {"status": "ok", "message": "Presupuesto actualizado"}
-
-@app.delete("/budgets/{budget_id}")
-def delete_budget(budget_id: int):
-    """Delete a budget by ID."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Check if exists
-    cursor.execute(sql_param("SELECT id FROM budgets WHERE id = ?"), (budget_id,))
-    if not cursor.fetchone():
-        conn.close()
-        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
-    
-    cursor.execute(sql_param("DELETE FROM budgets WHERE id = ?"), (budget_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "message": "Presupuesto eliminado"}
 
 
 
@@ -1992,98 +2134,317 @@ def create_category(cat: CategoryCreate):
     finally:
         conn.close()
 
+import calendar
+
+class BudgetItemCreate(BaseModel):
+    nombre: str
+    monto: float
+    fecha_pago: Optional[int] = None
+    frecuencia: str = 'unavez'
+    banco_designado: Optional[str] = None
+    cuenta_designada: Optional[str] = None
+
 class BudgetCreate(BaseModel):
     category: str
-    amount: float
-    month: str # YYYY-MM
+    month: str
     environment: str = 'PROD'
+    items: List[BudgetItemCreate] = []
 
 class BudgetUpdate(BaseModel):
-    amount: float
+    nombre: Optional[str] = None
+    amount: float = None
+    banco_designado: Optional[str] = None
+    cuenta_designada: Optional[str] = None
+    fecha_pago: Optional[str] = None
+    frecuencia: Optional[str] = None
+
+
+# --- Motor de Reglas: Evaluación Perezosa ---
+
+def rule_applies_to_month(rule_month: str, rule_freq: str, target_month: str) -> bool:
+    """Determina si una regla de presupuesto aplica para el mes consultado."""
+    if rule_freq == 'unavez':
+        return rule_month == target_month
+    elif rule_freq == 'mensual':
+        return rule_month <= target_month
+    elif rule_freq == 'anual':
+        return rule_month[5:7] == target_month[5:7] and rule_month <= target_month
+    elif rule_freq == 'diario':
+        return rule_month <= target_month
+    return False
+
+def get_effective_amount(amount: float, frecuencia: str, target_month: str) -> float:
+    """Calcula el monto efectivo del presupuesto para el mes dado.
+    Para 'diario', multiplica el monto diario por los días del mes."""
+    if frecuencia == 'diario':
+        year, month = map(int, target_month.split('-'))
+        days_in_month = calendar.monthrange(year, month)[1]
+        return round(amount * days_in_month, 0)
+    return amount
+
 
 @app.get("/budgets")
 def get_budgets(month: str, environment: str = "PROD"):
+    """Motor de Reglas: Evalúa TODAS las reglas y devuelve las que aplican al mes consultado."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # 1. Get Budgets
-    cursor.execute(sql_param("SELECT * FROM budgets WHERE month = ? AND environment = ?"), (month, environment))
-    budgets = fetchall_as_dict(cursor)
+    # 1. Obtener TODAS las reglas de presupuesto del environment
+    cursor.execute(sql_param(
+        "SELECT * FROM budgets WHERE environment = ? ORDER BY category ASC, month DESC"
+    ), (environment,))
+    all_rules = fetchall_as_dict(cursor)
     
-    # 2. Get Actual Spending for each budget category in that month
-    # We need to sum "gasto" from transactions where category matches and date is in the month
-    # Using simple string matching for month (YYYY-MM)
+    # 2. Evaluar cuáles aplican al mes consultado (Evaluación Perezosa)
+    # Si existe una regla 'unavez' para la misma categoría+nombre, tiene prioridad (excepción)
+    applicable = []
+    seen_rules = set() # guarda (categoría, nombre)
     
-    budget_list = []
-    for b in budgets:
+    # Primero: recoger las excepciones 'unavez' para este mes
+    for rule in all_rules:
+        freq = rule.get('frecuencia', 'unavez') or 'unavez'
+        if freq == 'unavez' and rule['month'] == month:
+            name = rule.get('nombre') or 'General'
+            seen_rules.add((rule['category'], name))
+            applicable.append(rule)
+    
+    # Segundo: evaluar las reglas recurrentes (solo si la(s) categoría+nombre no tiene excepción)
+    for rule in all_rules:
+        freq = rule.get('frecuencia', 'unavez') or 'unavez'
+        if freq == 'unavez':
+            continue  # ya procesadas arriba
+            
+        name = rule.get('nombre') or 'General'
+        if (rule['category'], name) in seen_rules:
+            continue  # la excepción tiene prioridad
+            
+        if rule_applies_to_month(rule['month'], freq, month):
+            seen_rules.add((rule['category'], name))
+            applicable.append(rule)
+    
+    # 3. Calcular progreso de gasto para cada presupuesto aplicable y agrupar visualmente por categoría
+    category_map = {}
+    for b in applicable:
         cat = b['category']
-        # Sum spending
+        freq = b.get('frecuencia', 'unavez') or 'unavez'
+        effective_amount = get_effective_amount(b['amount'], freq, month)
+        
+        # Sumar gastos reales del mes vinculados
         cursor.execute(sql_param("""
-            SELECT SUM(gasto) FROM transactions 
-            WHERE environment = ? AND categoria = ? AND fecha LIKE ?
-        """), (environment, cat, f"{month}%"))
+            SELECT SUM(gasto), COUNT(id) FROM transactions 
+            WHERE environment = ? AND budget_item_id = ? AND fecha LIKE ?
+        """), (environment, b['id'], f"{month}%"))
         
         row = cursor.fetchone()
         spent = row[0] if row and row[0] else 0
+        tx_count = row[1] if row and row[1] else 0
         
-        amount = b['amount']
-        remaining = amount - spent
-        percentage = (spent / amount * 100) if amount > 0 else 0
+        remaining = effective_amount - spent
         
-        b_dict = dict(b)
-        b_dict['spent'] = spent
-        b_dict['remaining'] = remaining
-        b_dict['percentage'] = percentage
-        b_dict['exceeded'] = spent > amount
+        item_dict = dict(b)
+        item_dict['nombre'] = b.get('nombre') or 'General'
+        item_dict['amount'] = effective_amount
+        item_dict['amount_original'] = b['amount']  # monto base de la regla
+        item_dict['frecuencia'] = freq
+        item_dict['spent'] = spent
+        item_dict['remaining'] = max(0, remaining)
+        item_dict['pagado'] = tx_count > 0
+        item_dict['exceeded'] = spent > effective_amount
+
+        if cat not in category_map:
+            category_map[cat] = {
+                'id': f"cat_{cat}_{month}",
+                'category': cat,
+                'amount': 0,
+                'amount_original': 0,
+                'spent': 0,
+                'remaining': 0,
+                'percentage': 0,
+                'exceeded': False,
+                'frecuencia': 'varios', 
+                'items': []
+            }
         
-        budget_list.append(b_dict)
+        category_map[cat]['items'].append(item_dict)
+        category_map[cat]['amount'] += effective_amount
+        category_map[cat]['amount_original'] += b['amount']
+        category_map[cat]['spent'] += spent
+        category_map[cat]['remaining'] += item_dict['remaining']
+        
+    budget_list = []
+    for cat_data in category_map.values():
+        if cat_data['amount'] > 0:
+            cat_data['percentage'] = round((cat_data['spent'] / cat_data['amount'] * 100), 1)
+        cat_data['exceeded'] = cat_data['spent'] > cat_data['amount']
+        
+        # Sort items inside category by name to keep them consistent
+        cat_data['items'].sort(key=lambda x: x['nombre'])
+        
+        budget_list.append(cat_data)
         
     conn.close()
-    return budget_list
+    return sorted(budget_list, key=lambda x: x['category'])
+
+
+@app.get("/budgets/annual-projection")
+def get_annual_projection(year: int, environment: str = "PROD"):
+    """Proyección Anual: Calcula la matriz de presupuestos para los 12 meses del año."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Obtener todas las reglas
+    cursor.execute(sql_param(
+        "SELECT * FROM budgets WHERE environment = ? ORDER BY category ASC, month DESC"
+    ), (environment,))
+    all_rules = fetchall_as_dict(cursor)
+    conn.close()
+    
+    categories_set = set()
+    months_data = {}
+    totals_by_month = {}
+    totals_by_category = {}
+    
+    for m in range(1, 13):
+        target_month = f"{year}-{m:02d}"
+        months_data[target_month] = {}
+        seen_cats = set()
+        
+        # Prioridad: excepciones 'unavez'
+        for rule in all_rules:
+            freq = rule.get('frecuencia', 'unavez') or 'unavez'
+            if freq == 'unavez' and rule['month'] == target_month:
+                cat = rule['category']
+                amt = rule['amount']
+                months_data[target_month][cat] = amt
+                seen_cats.add(cat)
+                categories_set.add(cat)
+        
+        # Reglas recurrentes
+        for rule in all_rules:
+            freq = rule.get('frecuencia', 'unavez') or 'unavez'
+            if freq == 'unavez':
+                continue
+            cat = rule['category']
+            if cat in seen_cats:
+                continue
+            if rule_applies_to_month(rule['month'], freq, target_month):
+                amt = get_effective_amount(rule['amount'], freq, target_month)
+                months_data[target_month][cat] = amt
+                seen_cats.add(cat)
+                categories_set.add(cat)
+        
+        totals_by_month[target_month] = sum(months_data[target_month].values())
+    
+    # Totales por categoría
+    for cat in categories_set:
+        totals_by_category[cat] = sum(
+            months_data[m].get(cat, 0) for m in months_data
+        )
+    
+    return {
+        "year": year,
+        "categories": sorted(list(categories_set)),
+        "months": months_data,
+        "totals_by_month": totals_by_month,
+        "totals_by_category": totals_by_category
+    }
+
 
 @app.post("/budgets")
 def create_budget(budget: BudgetCreate):
+    """Crear una nueva regla de presupuesto multilínea (ítems independientes)."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Check duplicate
-    cursor.execute(sql_param("SELECT id FROM budgets WHERE category = ? AND month = ? AND environment = ?"), 
-                   (budget.category, budget.month, budget.environment))
-    if cursor.fetchone():
+    if hardly_any := len(budget.items) == 0:
         conn.close()
-        raise HTTPException(status_code=400, detail="Ya existe un presupuesto para esta categoría en este mes")
+        raise HTTPException(status_code=400, detail="Debe especificar al menos un ítem o regla")
 
-    cursor.execute(sql_param("""
-        INSERT INTO budgets (category, amount, month, environment, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """), (budget.category, budget.amount, budget.month, budget.environment, datetime.now()))
-    
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "message": "Budget created"}
+    try:
+        for item in budget.items:
+            nombre = item.nombre or 'General'
+            # Verificar duplicados para excepciones (unavez) en un mes
+            if item.frecuencia == 'unavez':
+                cursor.execute(sql_param(
+                    "SELECT id FROM budgets WHERE category = ? AND nombre = ? AND month = ? AND environment = ? AND frecuencia = 'unavez'"
+                ), (budget.category, nombre, budget.month, budget.environment))
+                if cursor.fetchone():
+                    continue # Skip exact duplicate exception
+
+            # Insertar el item como una regla principal en `budgets`
+            cursor.execute(sql_param("""
+                INSERT INTO budgets (category, nombre, amount, month, environment, banco_designado, cuenta_designada, fecha_pago, frecuencia)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """), (budget.category, nombre, item.monto, budget.month, budget.environment, 
+                   item.banco_designado, item.cuenta_designada, str(item.fecha_pago) if item.fecha_pago else None, item.frecuencia))
+
+        conn.commit()
+        return {"status": "ok", "message": "Presupuesto creado"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
 
 @app.put("/budgets/{budget_id}")
 def update_budget(budget_id: int, budget: BudgetUpdate):
+    """Actualizar una regla de presupuesto existente."""
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute(sql_param("UPDATE budgets SET amount = ? WHERE id = ?"), (budget.amount, budget_id))
+    updates = []
+    params = []
+    
+    if budget.nombre is not None:
+        updates.append("nombre = ?")
+        params.append(budget.nombre)
+    if budget.amount is not None:
+        updates.append("amount = ?")
+        params.append(budget.amount)
+    if budget.banco_designado is not None:
+        updates.append("banco_designado = ?")
+        params.append(budget.banco_designado)
+    if budget.fecha_pago is not None:
+        updates.append("fecha_pago = ?")
+        params.append(budget.fecha_pago)
+    if budget.cuenta_designada is not None:
+        updates.append("cuenta_designada = ?")
+        params.append(budget.cuenta_designada)
+    if budget.frecuencia is not None:
+        updates.append("frecuencia = ?")
+        params.append(budget.frecuencia)
+        
+    if not updates:
+        conn.close()
+        return {"status": "ok", "message": "Sin cambios"}
+        
+    query = f"UPDATE budgets SET {', '.join(updates)} WHERE id = ?"
+    params.append(budget_id)
+    
+    cursor.execute(sql_param(query), params)
     if cursor.rowcount == 0:
         conn.close()
-        raise HTTPException(status_code=404, detail="Budget not found")
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
         
     conn.commit()
     conn.close()
-    return {"status": "ok", "message": "Budget updated"}
+    return {"status": "ok", "message": "Presupuesto actualizado"}
+
 
 @app.delete("/budgets/{budget_id}")
 def delete_budget(budget_id: int):
+    """Eliminar una regla de presupuesto."""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(sql_param("DELETE FROM budgets WHERE id = ?"), (budget_id,))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Presupuesto no encontrado")
     conn.commit()
     conn.close()
-    return {"status": "ok", "message": "Budget deleted"}
+    return {"status": "ok", "message": "Presupuesto eliminado"}
 
 
 # --- Savings Goals ---
@@ -2111,6 +2472,7 @@ class SavingsContributionCreate(BaseModel):
     monto: float
     fecha: str = None  # Defaults to today
     banco: str = None
+    cuenta: str = 'Principal'
 
 @app.get("/savings-goals")
 def get_savings_goals(environment: str = "PROD"):
@@ -2279,9 +2641,9 @@ def contribute_to_goal(goal_id: int, contribution: SavingsContributionCreate):
     try:
         # Insert contribution
         cursor.execute(sql_param('''
-            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
-            VALUES (?, ?, ?, ?)
-        '''), (goal_id, contribution.monto, fecha, contribution.banco))
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco, cuenta)
+            VALUES (?, ?, ?, ?, ?)
+        '''), (goal_id, contribution.monto, fecha, contribution.banco, contribution.cuenta))
         
         # Update goal's monto_actual
         current_amount = row[1] if USE_POSTGRES else row['monto_actual']
@@ -2323,7 +2685,7 @@ def get_goal_contributions(goal_id: int):
         raise HTTPException(status_code=404, detail="Meta no encontrada")
     
     cursor.execute(sql_param('''
-        SELECT id, monto, fecha, banco FROM savings_contributions 
+        SELECT id, monto, fecha, banco, cuenta FROM savings_contributions 
         WHERE goal_id = ? ORDER BY fecha DESC
     '''), (goal_id,))
     
@@ -2331,7 +2693,7 @@ def get_goal_contributions(goal_id: int):
     conn.close()
     
     if USE_POSTGRES:
-        return [{"id": r[0], "monto": r[1], "fecha": r[2], "banco": r[3]} for r in rows]
+        return [{"id": r[0], "monto": r[1], "fecha": r[2], "banco": r[3], "cuenta": r[4]} for r in rows]
     return [dict(row) for row in rows]
 
 @app.get("/savings-goals/{goal_id}/history")
@@ -2348,14 +2710,14 @@ def get_goal_history(goal_id: int):
     
     # Get Contributions
     cursor.execute(sql_param('''
-        SELECT id, monto, fecha, banco FROM savings_contributions 
+        SELECT id, monto, fecha, banco, cuenta FROM savings_contributions 
         WHERE goal_id = ?
     '''), (goal_id,))
     contributions = fetchall_as_dict(cursor)
     
     # Get Withdrawals
     cursor.execute(sql_param('''
-        SELECT id, monto, fecha, banco, motivo FROM savings_withdrawals 
+        SELECT id, monto, fecha, banco, cuenta, motivo FROM savings_withdrawals 
         WHERE goal_id = ?
     '''), (goal_id,))
     withdrawals = fetchall_as_dict(cursor)
@@ -2373,6 +2735,7 @@ def get_goal_history(goal_id: int):
             "monto": c['monto'], # Positive
             "tipo": "Aporte",
             "banco": c['banco'],
+            "cuenta": c.get('cuenta') or 'Principal',
             "detalle": "Aporte"
         })
         
@@ -2384,6 +2747,7 @@ def get_goal_history(goal_id: int):
             "monto": -w['monto'], # Negative
             "tipo": "Retiro",
             "banco": w['banco'],
+            "cuenta": w.get('cuenta') or 'Principal',
             "detalle": w.get('motivo') or "Retiro"
         })
     
@@ -2447,6 +2811,9 @@ def update_contribution(contribution_id: int, data: dict):
     if "banco" in data:
         fields.append("banco = ?")
         params.append(data["banco"])
+    if "cuenta" in data:
+        fields.append("cuenta = ?")
+        params.append(data["cuenta"])
         
     if not fields:
         conn.close()
@@ -2543,7 +2910,7 @@ def get_savings_summary(environment: str = "PROD"):
     conn.close()
     
     return {
-        "total_ahorrado": total_ahorrado,
+        "total_ahorrado": round(total_ahorrado, 2),
         "num_metas": num_metas
     }
 
@@ -2570,7 +2937,36 @@ def get_savings_by_bank(environment: str = "PROD"):
     for row in rows:
         banco = row[0] if USE_POSTGRES else row['banco']
         monto = row[1] if USE_POSTGRES else row['total_aportado']
-        result[banco] = monto
+        if round(monto, 2) != 0:
+            result[banco] = round(monto, 2)
+        
+    return result
+
+@app.get("/savings-goals/by-account")
+def get_savings_by_account(environment: str = "PROD"):
+    """Get total contributions grouped by bank and account."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(sql_param('''
+        SELECT sc.banco, sc.cuenta, COALESCE(SUM(sc.monto), 0) as total_aportado
+        FROM savings_contributions sc
+        JOIN savings_goals sg ON sc.goal_id = sg.id
+        WHERE sg.environment = ? AND sc.banco IS NOT NULL AND sc.banco != ''
+        GROUP BY sc.banco, sc.cuenta
+    '''), (environment,))
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    result = {}
+    for row in rows:
+        banco = row[0] if USE_POSTGRES else row['banco']
+        cuenta = row[1] if USE_POSTGRES else row['cuenta']
+        monto = row[2] if USE_POSTGRES else row['total_aportado']
+        if round(monto, 2) != 0:
+            key = f"{banco}|{cuenta or 'Principal'}"
+            result[key] = round(monto, 2)
     
     return result
 
@@ -2585,7 +2981,7 @@ def get_goal_banks(goal_id: int):
         FROM savings_contributions 
         WHERE goal_id = ? AND banco IS NOT NULL AND banco != ''
         GROUP BY banco
-        HAVING COALESCE(SUM(monto), 0) > 0
+        HAVING COALESCE(SUM(monto), 0) != 0
         ORDER BY total DESC
     '''), (goal_id,))
     
@@ -2625,7 +3021,9 @@ def complete_savings_goal(goal_id: int):
 
 class SavingsTransfer(BaseModel):
     banco_origen: str
+    cuenta_origen: str = 'Principal'
     banco_destino: str
+    cuenta_destino: str = 'Principal'
     goal_ids: Optional[list[int]] = None # If None, transfer ALL goals from that bank
     environment: str = "PROD"
 
@@ -2640,8 +3038,12 @@ def transfer_savings_between_banks(transfer: SavingsTransfer):
     
     try:
         # Build the query
-        query = "UPDATE savings_contributions SET banco = ? WHERE banco = ?"
-        params = [transfer.banco_destino, transfer.banco_origen]
+        if transfer.cuenta_origen == 'Principal':
+            query = "UPDATE savings_contributions SET banco = ?, cuenta = ? WHERE banco = ? AND (TRIM(cuenta) = ? OR cuenta IS NULL OR TRIM(cuenta) = '')"
+        else:
+            query = "UPDATE savings_contributions SET banco = ?, cuenta = ? WHERE banco = ? AND TRIM(cuenta) = ?"
+        
+        params = [transfer.banco_destino, transfer.cuenta_destino, transfer.banco_origen, transfer.cuenta_origen]
         
         # If specific goals are provided, limit the update
         if transfer.goal_ids and len(transfer.goal_ids) > 0:
@@ -2675,6 +3077,7 @@ class SavingsWithdrawal(BaseModel):
     motivo: str = None
     categoria: str = None
     banco: str = None
+    cuenta: str = 'Principal'
     fecha_limite_reponer: str
 
 @app.post("/savings-goals/{goal_id}/withdraw")
@@ -2702,28 +3105,28 @@ def create_withdrawal(goal_id: int, withdrawal: SavingsWithdrawal, environment: 
         cursor.execute(sql_param('''
             SELECT COALESCE(SUM(monto), 0) as total 
             FROM savings_contributions 
-            WHERE goal_id = ? AND banco = ?
-        '''), (goal_id, withdrawal.banco))
+            WHERE goal_id = ? AND banco = ? AND cuenta = ?
+        '''), (goal_id, withdrawal.banco, withdrawal.cuenta))
         bank_total = cursor.fetchone()[0]
         if bank_total < withdrawal.monto:
             conn.close()
-            raise HTTPException(status_code=400, detail=f"El banco {withdrawal.banco} solo tiene ${bank_total:,.0f} aportado a esta meta")
+            raise HTTPException(status_code=400, detail=f"La cuenta {withdrawal.cuenta} de {withdrawal.banco} solo tiene ${bank_total:,.0f} aportado a esta meta")
     
     fecha_hoy = datetime.now().strftime("%Y-%m-%d")
     
     # 1. Create the withdrawal record (for tracking pending repayments)
     cursor.execute(sql_param('''
-        INSERT INTO savings_withdrawals (goal_id, monto, motivo, categoria, banco, fecha, fecha_limite_reponer, repuesto)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO savings_withdrawals (goal_id, monto, motivo, categoria, banco, cuenta, fecha, fecha_limite_reponer, repuesto)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     '''), (goal_id, withdrawal.monto, withdrawal.motivo, withdrawal.categoria, 
-           withdrawal.banco, fecha_hoy, withdrawal.fecha_limite_reponer, False if USE_POSTGRES else 0))
+           withdrawal.banco, withdrawal.cuenta, fecha_hoy, withdrawal.fecha_limite_reponer, False if USE_POSTGRES else 0))
     
     # 2. Create a NEGATIVE contribution to reduce the bank's committed amount
     if withdrawal.banco:
         cursor.execute(sql_param('''
-            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
-            VALUES (?, ?, ?, ?)
-        '''), (goal_id, -withdrawal.monto, fecha_hoy, withdrawal.banco))
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco, cuenta)
+            VALUES (?, ?, ?, ?, ?)
+        '''), (goal_id, -withdrawal.monto, fecha_hoy, withdrawal.banco, withdrawal.cuenta))
     
     # 3. Reduce monto_actual of the goal
     nuevo_monto = monto_actual - withdrawal.monto
@@ -2741,7 +3144,7 @@ def get_goal_withdrawals(goal_id: int):
     cursor = conn.cursor()
     
     cursor.execute(sql_param('''
-        SELECT id, monto, motivo, categoria, banco, fecha, fecha_limite_reponer, repuesto, fecha_repuesto
+        SELECT id, monto, motivo, categoria, banco, cuenta, fecha, fecha_limite_reponer, repuesto, fecha_repuesto
         FROM savings_withdrawals WHERE goal_id = ? ORDER BY fecha DESC
     '''), (goal_id,))
     
@@ -2762,7 +3165,7 @@ def get_pending_withdrawals(environment: str = "PROD"):
     
     cursor.execute(sql_param('''
         SELECT sw.id, sw.goal_id, sg.nombre as goal_nombre, sw.monto, sw.motivo, 
-               sw.categoria, sw.banco, sw.fecha, sw.fecha_limite_reponer
+               sw.categoria, sw.banco, sw.cuenta, sw.fecha, sw.fecha_limite_reponer
         FROM savings_withdrawals sw
         JOIN savings_goals sg ON sw.goal_id = sg.id
         WHERE sg.environment = ? AND (sw.repuesto = ? OR sw.repuesto IS NULL)
@@ -2782,7 +3185,7 @@ def repay_withdrawal(withdrawal_id: int, monto: float = None):
     
     # Get withdrawal info including banco
     cursor.execute(sql_param('''
-        SELECT id, goal_id, monto, repuesto, banco FROM savings_withdrawals WHERE id = ?
+        SELECT id, goal_id, monto, repuesto, banco, cuenta FROM savings_withdrawals WHERE id = ?
     '''), (withdrawal_id,))
     withdrawal = cursor.fetchone()
     
@@ -2794,6 +3197,7 @@ def repay_withdrawal(withdrawal_id: int, monto: float = None):
     withdrawal_monto = withdrawal[2] if USE_POSTGRES else withdrawal['monto']
     repuesto = withdrawal[3] if USE_POSTGRES else withdrawal['repuesto']
     banco = withdrawal[4] if USE_POSTGRES else withdrawal['banco']
+    cuenta = withdrawal[5] if USE_POSTGRES else withdrawal['cuenta']
     
     if repuesto:
         conn.close()
@@ -2814,9 +3218,9 @@ def repay_withdrawal(withdrawal_id: int, monto: float = None):
     # Create a POSITIVE contribution to restore the bank's committed amount
     if banco:
         cursor.execute(sql_param('''
-            INSERT INTO savings_contributions (goal_id, monto, fecha, banco)
-            VALUES (?, ?, ?, ?)
-        '''), (goal_id, withdrawal_monto, fecha_hoy, banco))
+            INSERT INTO savings_contributions (goal_id, monto, fecha, banco, cuenta)
+            VALUES (?, ?, ?, ?, ?)
+        '''), (goal_id, withdrawal_monto, fecha_hoy, banco, cuenta))
     
     conn.commit()
     conn.close()

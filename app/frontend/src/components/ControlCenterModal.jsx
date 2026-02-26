@@ -7,7 +7,7 @@ import CategoriesManager from './CategoriesManager';
 import SettingsPanel from './SettingsPanel';
 import AccountMigratorModal from './AccountMigratorModal';
 
-export default function ControlCenterModal({ isOpen, onClose, timeZone, setTimeZone, token, onCategoryChange }) {
+export default function ControlCenterModal({ isOpen, onClose, timeZone, setTimeZone, token, onCategoryChange, environment = "TEST" }) {
     if (!isOpen) return null;
 
     const [activeTab, setActiveTab] = useState('general');
@@ -108,13 +108,13 @@ export default function ControlCenterModal({ isOpen, onClose, timeZone, setTimeZ
                 );
 
             case 'banks':
-                return <BanksManager embedded={true} environment="TEST" />;
+                return <BanksManager embedded={true} environment={environment} />;
 
             case 'accounts':
-                return <AccountsManager embedded={true} environment="TEST" />;
+                return <AccountsManager embedded={true} environment={environment} />;
 
             case 'categories':
-                return <CategoriesManager embedded={true} environment="TEST" onCategoryChange={onCategoryChange} />;
+                return <CategoriesManager embedded={true} environment={environment} onCategoryChange={onCategoryChange} />;
 
             case 'security':
                 return <SettingsPanel embedded={true} token={token} />;

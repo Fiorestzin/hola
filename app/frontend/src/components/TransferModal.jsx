@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { X, ArrowRightLeft, Send, Calendar, DollarSign, FileText } from 'lucide-react';
 import { API_URL } from "../config";
 
-export default function TransferModal({ isOpen, onClose, environment = "TEST", onTransferComplete }) {
+export default function TransferModal({ isOpen, onClose, environment = "TEST", onTransferComplete, banksData = [] }) {
     const [banks, setBanks] = useState([]);
     const [bancoOrigen, setBancoOrigen] = useState('');
     const [cuentaOrigen, setCuentaOrigen] = useState('');
     const [bancoDestino, setBancoDestino] = useState('');
     const [cuentaDestino, setCuentaDestino] = useState('');
     const [accounts, setAccounts] = useState([]);
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
     const [monto, setMonto] = useState('');
     const [fecha, setFecha] = useState(new Date().toISOString().split('T')[0]);
     const [detalle, setDetalle] = useState('Transferencia interna');
@@ -19,6 +20,7 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
         if (isOpen) {
             fetchBanks();
             fetchAccounts();
+            fetchBankAccountsMap();
             // Reset form
             setBancoOrigen('');
             setCuentaOrigen('');
@@ -52,6 +54,15 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
             }
         } catch (error) {
             console.error("Error loading accounts:", error);
+        }
+    };
+
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) setBankAccountsMap(await res.json());
+        } catch (error) {
+            console.error("Error loading bank-accounts:", error);
         }
     };
 
@@ -122,6 +133,8 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
         return num ? parseInt(num).toLocaleString('es-CL') : '';
     };
 
+    const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
+
     const handleMontoChange = (e) => {
         const raw = e.target.value.replace(/\D/g, '');
         setMonto(raw);
@@ -164,22 +177,44 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                                 ))}
                             </select>
                         </div>
-                        {bancoOrigen !== 'Efectivo' && (
-                            <div className="flex-1">
-                                <label className="block text-sm text-slate-400 mb-1">Cuenta origen</label>
-                                <select
-                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                                    value={cuentaOrigen}
-                                    onChange={(e) => setCuentaOrigen(e.target.value)}
-                                    required={bancoOrigen !== 'Efectivo'}
-                                >
-                                    <option value="">Seleccionar...</option>
-                                    {accounts.map(a => (
-                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
+                        {bancoOrigen !== 'Efectivo' && (() => {
+                            const bankInfo = banksData.find(b => b.banco === bancoOrigen);
+                            let accountList = [];
+                            if (bankInfo && bankInfo.accounts) {
+                                accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                            } else {
+                                const assignedAccounts = bankAccountsMap[bancoOrigen] || [];
+                                accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                            }
+
+                            if (accountList.length === 0) {
+                                return (
+                                    <div className="flex-1">
+                                        <label className="block text-sm text-slate-400 mb-1">Cuenta origen</label>
+                                        <div className="w-full bg-slate-900 border border-amber-600/50 rounded-lg px-3 py-2.5 text-amber-500 text-xs">
+                                            Sin cuentas. Asigna en Configuración &gt; Bancos.
+                                        </div>
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="flex-1">
+                                    <label className="block text-sm text-slate-400 mb-1">Cuenta origen</label>
+                                    <select
+                                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                        value={cuentaOrigen}
+                                        onChange={(e) => setCuentaOrigen(e.target.value)}
+                                        required={bancoOrigen !== 'Efectivo'}
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {accountList.map(a => (
+                                            <option key={a.nombre} value={a.nombre}>{a.nombre} {a.saldoInfo}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Arrow indicator */}
@@ -205,22 +240,44 @@ export default function TransferModal({ isOpen, onClose, environment = "TEST", o
                                 ))}
                             </select>
                         </div>
-                        {bancoDestino !== 'Efectivo' && (
-                            <div className="flex-1">
-                                <label className="block text-sm text-slate-400 mb-1">Cuenta destino</label>
-                                <select
-                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
-                                    value={cuentaDestino}
-                                    onChange={(e) => setCuentaDestino(e.target.value)}
-                                    required={bancoDestino !== 'Efectivo'}
-                                >
-                                    <option value="">Seleccionar...</option>
-                                    {accounts.map(a => (
-                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
+                        {bancoDestino !== 'Efectivo' && (() => {
+                            const bankInfo = banksData.find(b => b.banco === bancoDestino);
+                            let accountList = [];
+                            if (bankInfo && bankInfo.accounts) {
+                                accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                            } else {
+                                const assignedAccounts = bankAccountsMap[bancoDestino] || [];
+                                accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                            }
+
+                            if (accountList.length === 0) {
+                                return (
+                                    <div className="flex-1">
+                                        <label className="block text-sm text-slate-400 mb-1">Cuenta destino</label>
+                                        <div className="w-full bg-slate-900 border border-amber-600/50 rounded-lg px-3 py-2.5 text-amber-500 text-xs">
+                                            Sin cuentas. Asigna en Configuración &gt; Bancos.
+                                        </div>
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="flex-1">
+                                    <label className="block text-sm text-slate-400 mb-1">Cuenta destino</label>
+                                    <select
+                                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-cyan-500"
+                                        value={cuentaDestino}
+                                        onChange={(e) => setCuentaDestino(e.target.value)}
+                                        required={bancoDestino !== 'Efectivo'}
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {accountList.map(a => (
+                                            <option key={a.nombre} value={a.nombre}>{a.nombre} {a.saldoInfo}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Amount */}

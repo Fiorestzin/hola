@@ -1,0 +1,12 @@
+CREATE TABLE budgets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                nombre TEXT,
+                amount REAL NOT NULL,
+                month TEXT NOT NULL,
+                environment TEXT DEFAULT 'TEST',
+                banco_designado TEXT,
+                cuenta_designada TEXT,
+                fecha_pago TEXT,
+                frecuencia TEXT DEFAULT 'unavez'
+            , repetir_mensual INTEGER DEFAULT 0)

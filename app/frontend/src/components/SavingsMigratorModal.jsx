@@ -3,20 +3,26 @@ import { X, ArrowRightLeft, Check, AlertCircle, Building2, PiggyBank } from 'luc
 import { API_URL } from "../config";
 import { useSnackbar } from '../context/SnackbarContext';
 
-export default function SavingsMigratorModal({ isOpen, onClose, environment = "TEST", sourceBank, onComplete }) {
+export default function SavingsMigratorModal({ isOpen, onClose, environment = "TEST", sourceBank, onComplete, banksData = [] }) {
     const { showSnackbar } = useSnackbar();
     const [targetBank, setTargetBank] = useState('');
+    const [sourceAccount, setSourceAccount] = useState('');
+    const [targetAccount, setTargetAccount] = useState('');
     const [banks, setBanks] = useState([]);
     const [metas, setMetas] = useState([]);
     const [selectedMetas, setSelectedMetas] = useState([]); // IDs of metas to move
     const [loading, setLoading] = useState(false);
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
     const [mode, setMode] = useState('all'); // 'all' or 'select'
 
     useEffect(() => {
         if (isOpen) {
             fetchBanks();
             fetchGoals();
+            fetchBankAccountsMap();
             setTargetBank('');
+            setSourceAccount('');
+            setTargetAccount('');
             setSelectedMetas([]);
             setMode('all');
         }
@@ -27,11 +33,23 @@ export default function SavingsMigratorModal({ isOpen, onClose, environment = "T
             const res = await fetch(`${API_URL}/banks/with-balance?environment=${environment}`);
             if (res.ok) {
                 const data = await res.json();
-                // Filter out the source bank
-                setBanks(data.filter(b => b.nombre !== sourceBank));
+                // Filter out the source bank (actually we could migrate to same bank different account, so let's keep it all)
+                setBanks(data);
             }
         } catch (error) {
             console.error("Error loading banks:", error);
+        }
+    };
+
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) {
+                const data = await res.json();
+                setBankAccountsMap(data);
+            }
+        } catch (error) {
+            console.error("Error loading bank accounts map:", error);
         }
     };
 
@@ -54,6 +72,16 @@ export default function SavingsMigratorModal({ isOpen, onClose, environment = "T
             return;
         }
 
+        if (!sourceAccount || !targetAccount) {
+            showSnackbar("Selecciona las cuentas de origen y destino", "error");
+            return;
+        }
+
+        if (sourceBank === targetBank && sourceAccount === targetAccount) {
+            showSnackbar("La cuenta de origen y destino no pueden ser la misma", "error");
+            return;
+        }
+
         if (mode === 'select' && selectedMetas.length === 0) {
             showSnackbar("Selecciona al menos una meta", "error");
             return;
@@ -63,7 +91,9 @@ export default function SavingsMigratorModal({ isOpen, onClose, environment = "T
         try {
             const payload = {
                 banco_origen: sourceBank,
+                cuenta_origen: sourceAccount,
                 banco_destino: targetBank,
+                cuenta_destino: targetAccount,
                 goal_ids: mode === 'all' ? null : selectedMetas,
                 environment
             };
@@ -125,25 +155,66 @@ export default function SavingsMigratorModal({ isOpen, onClose, environment = "T
                 <div className="p-6 space-y-6">
                     {/* Source Indicator */}
                     <div className="flex items-center justify-center gap-4 py-4 bg-slate-900/50 rounded-2xl border border-white/5">
-                        <div className="text-center">
-                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Origen</p>
-                            <span className="text-indigo-300 font-semibold">{sourceBank}</span>
+                        <div className="text-center flex-1 max-w-[150px]">
+                            <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Origen: {sourceBank}</p>
+                            <select
+                                className="w-full bg-transparent text-indigo-300 text-sm font-semibold border-none focus:outline-none cursor-pointer"
+                                value={sourceAccount}
+                                onChange={(e) => setSourceAccount(e.target.value)}
+                            >
+                                <option value="" disabled className="bg-slate-800 text-slate-500">Cuenta origen...</option>
+                                {(() => {
+                                    const bankInfo = banksData.find(b => b.banco === sourceBank);
+                                    let accountList = [];
+                                    if (bankInfo && bankInfo.accounts) {
+                                        accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                                    } else {
+                                        const assignedAccounts = bankAccountsMap[sourceBank] || [];
+                                        accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                                    }
+                                    return accountList.map(a => (
+                                        <option key={a.nombre} value={a.nombre} className="bg-slate-800 text-white">{a.nombre} {a.saldoInfo}</option>
+                                    ));
+                                })()}
+                            </select>
                         </div>
                         <ArrowRightLeft className="text-slate-700" size={20} />
-                        <div className="text-center">
+                        <div className="text-center flex-1 max-w-[150px]">
                             <p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Destino</p>
                             <select
-                                className="bg-transparent text-emerald-400 font-semibold focus:outline-none cursor-pointer"
+                                className="w-full bg-transparent text-emerald-400 font-semibold focus:outline-none cursor-pointer"
                                 value={targetBank}
-                                onChange={(e) => setTargetBank(e.target.value)}
+                                onChange={(e) => { setTargetBank(e.target.value); setTargetAccount(''); }}
                             >
-                                <option value="" disabled className="bg-slate-800 text-slate-500">Seleccionar...</option>
+                                <option value="" disabled className="bg-slate-800 text-slate-500">Banco...</option>
                                 {banks.map(b => (
                                     <option key={b.nombre} value={b.nombre} className="bg-slate-800 text-white">
                                         {b.nombre}
                                     </option>
                                 ))}
                             </select>
+                            {targetBank && (
+                                <select
+                                    className="w-full mt-2 bg-transparent text-emerald-300 text-sm font-semibold border-none focus:outline-none cursor-pointer"
+                                    value={targetAccount}
+                                    onChange={(e) => setTargetAccount(e.target.value)}
+                                >
+                                    <option value="" disabled className="bg-slate-800 text-slate-500">Cuenta destino...</option>
+                                    {(() => {
+                                        const bankInfo = banksData.find(b => b.banco === targetBank);
+                                        let accountList = [];
+                                        if (bankInfo && bankInfo.accounts) {
+                                            accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                                        } else {
+                                            const assignedAccounts = bankAccountsMap[targetBank] || [];
+                                            accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                                        }
+                                        return accountList.map(a => (
+                                            <option key={a.nombre} value={a.nombre} className="bg-slate-800 text-white">{a.nombre} {a.saldoInfo}</option>
+                                        ));
+                                    })()}
+                                </select>
+                            )}
                         </div>
                     </div>
 

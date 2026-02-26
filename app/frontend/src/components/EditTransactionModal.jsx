@@ -11,7 +11,8 @@ export default function EditTransactionModal({
     environment = 'TEST',
     onUpdate,
     onDelete,
-    token
+    token,
+    banksData = []
 }) {
     const [formData, setFormData] = useState({
         fecha: '',
@@ -20,12 +21,14 @@ export default function EditTransactionModal({
         detalle: '',
         banco: '',
         cuenta: '',
-        tipo: 'Gasto'
+        tipo: 'Gasto',
+        budget_item_id: null
     });
 
     const [categories, setCategories] = useState([]);
     const [banks, setBanks] = useState([]);
     const [accounts, setAccounts] = useState([]);
+    const [bankAccountsMap, setBankAccountsMap] = useState({});
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -46,7 +49,8 @@ export default function EditTransactionModal({
                 detalle: transaction.detalle || '',
                 banco: transaction.banco || '',
                 cuenta: transaction.cuenta || '',
-                tipo: transaction.ingreso > 0 ? 'Ingreso' : 'Gasto'
+                tipo: transaction.ingreso > 0 ? 'Ingreso' : 'Gasto',
+                budget_item_id: transaction.budget_item_id || null
             });
             setError('');
             setShowDeleteConfirm(false);
@@ -60,6 +64,7 @@ export default function EditTransactionModal({
             fetchCategories();
             fetchBanks();
             fetchAccounts();
+            fetchBankAccountsMap();
         }
     }, [isOpen, transaction, environment]);
 
@@ -120,6 +125,15 @@ export default function EditTransactionModal({
         }
     };
 
+    const fetchBankAccountsMap = async () => {
+        try {
+            const res = await fetch(`${API_URL}/bank-accounts/all?environment=${environment}`);
+            if (res.ok) setBankAccountsMap(await res.json());
+        } catch (err) {
+            console.error('Error fetching bank-accounts:', err);
+        }
+    };
+
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
@@ -140,7 +154,8 @@ export default function EditTransactionModal({
                     detalle: formData.detalle,
                     banco: formData.banco,
                     cuenta: formData.banco === 'Efectivo' ? '' : formData.cuenta,
-                    monto: parseFloat(formData.monto)
+                    monto: parseFloat(formData.monto),
+                    budget_item_id: formData.budget_item_id
                 })
             });
 
@@ -199,6 +214,8 @@ export default function EditTransactionModal({
         const num = String(value).replace(/\D/g, '');
         return num ? parseInt(num).toLocaleString('es-CL') : '';
     };
+
+    const fmt = (num) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP' }).format(num);
 
     const handleMontoChange = (e) => {
         const raw = e.target.value.replace(/\D/g, '');
@@ -368,23 +385,34 @@ export default function EditTransactionModal({
                                 ))}
                             </select>
                         </div>
-                        {formData.banco !== 'Efectivo' && (
-                            <div>
-                                <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
-                                    <FileText size={14} /> Cuenta
-                                </label>
-                                <select
-                                    name="cuenta"
-                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
-                                    value={formData.cuenta}
-                                    onChange={handleChange}
-                                >
-                                    {accounts.map(a => (
-                                        <option key={a.id} value={a.nombre}>{a.nombre}</option>
-                                    ))}
-                                </select>
-                            </div>
-                        )}
+                        {formData.banco !== 'Efectivo' && (() => {
+                            const bankInfo = banksData.find(b => b.banco === formData.banco);
+                            let accountList = [];
+                            if (bankInfo && bankInfo.accounts) {
+                                accountList = bankInfo.accounts.map(a => ({ nombre: a.cuenta, saldoInfo: `(${fmt(a.saldo)})` }));
+                            } else {
+                                const assignedAccounts = bankAccountsMap[formData.banco] || [];
+                                accountList = assignedAccounts.map(name => ({ nombre: name, saldoInfo: '' }));
+                            }
+                            return (
+                                <div>
+                                    <label className="block text-sm text-slate-400 mb-1 flex items-center gap-1">
+                                        <FileText size={14} /> Cuenta
+                                    </label>
+                                    <select
+                                        name="cuenta"
+                                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500"
+                                        value={formData.cuenta}
+                                        onChange={handleChange}
+                                    >
+                                        <option value="">Seleccionar...</option>
+                                        {accountList.map(a => (
+                                            <option key={a.nombre} value={a.nombre}>{a.nombre} {a.saldoInfo}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Category */}

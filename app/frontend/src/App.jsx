@@ -21,7 +21,11 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [savingsSummary, setSavingsSummary] = useState({ total_ahorrado: 0, num_metas: 0 });
   const [savingsByBank, setSavingsByBank] = useState({}); // {banco: monto_aportado}
+  const [savingsByBankAcct, setSavingsByBankAcct] = useState({}); // {banco|cuenta: monto_aportado}
   const [pendingByBank, setPendingByBank] = useState({}); // {banco: monto_pendiente_reponer}
+  const [upcomingItems, setUpcomingItems] = useState([]); // Array of pending budget items
+  const [budgetByBank, setBudgetByBank] = useState({}); // {banco: monto_presupuestado_pendiente}
+  const [budgetByBankAcct, setBudgetByBankAcct] = useState({}); // {"banco|cuenta": monto}
 
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -31,6 +35,7 @@ function App() {
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState('Gasto'); // 'Ingreso' or 'Gasto'
+  const [modalInitialData, setModalInitialData] = useState(null); // Para prellenar desde presupuestos
 
 
   // Categories & Banks State (Now handled inside Control Center, but we might keep specific open states if needed for shortcuts, lets remove them for now to strictly follow plan)
@@ -199,7 +204,13 @@ function App() {
           setSavingsByBank(byBankData);
         }
 
-        // Fetch pending withdrawals by bank
+        // Fetch per-account savings
+        const byAccountRes = await fetch(`${API_URL}/savings-goals/by-account?environment=${APP_ENV}`);
+        if (byAccountRes.ok) {
+          const byAccountData = await byAccountRes.json();
+          setSavingsByBankAcct(byAccountData);
+        }
+
         const pendingRes = await fetch(`${API_URL}/savings-withdrawals/pending?environment=${APP_ENV}`);
         if (pendingRes.ok) {
           const pendingData = await pendingRes.json();
@@ -212,8 +223,46 @@ function App() {
           });
           setPendingByBank(grouped);
         }
+
+        // Fetch budgets to calculate upcoming items
+        const currentMonth = new Date().toISOString().slice(0, 7);
+        const budgetRes = await fetch(`${API_URL}/budgets?month=${currentMonth}&environment=${APP_ENV}`);
+        if (budgetRes.ok) {
+          const budgets = await budgetRes.json();
+          const items = [];
+          budgets.forEach(b => {
+            if (b.items && b.items.length > 0) {
+              b.items.forEach(item => {
+                if (!item.pagado) {
+                  items.push({ ...item, category: b.category });
+                }
+              });
+            }
+          });
+
+          const todayDay = new Date().getDate();
+          items.sort((a, b) => {
+            const distA = a.fecha_pago ? a.fecha_pago - todayDay : 1000;
+            const distB = b.fecha_pago ? b.fecha_pago - todayDay : 1000;
+            return distA - distB;
+          });
+          setUpcomingItems(items);
+
+          // Calculate budget commitments per bank and per bank+account
+          const byBank = {};
+          const byBankAcct = {};
+          items.forEach(item => {
+            if (item.banco_designado) {
+              byBank[item.banco_designado] = (byBank[item.banco_designado] || 0) + (item.amount || 0);
+              const key = `${item.banco_designado}|${item.cuenta_designada || ''}`;
+              byBankAcct[key] = (byBankAcct[key] || 0) + (item.amount || 0);
+            }
+          });
+          setBudgetByBank(byBank);
+          setBudgetByBankAcct(byBankAcct);
+        }
       } catch (e) {
-        console.error("Error fetching savings summary:", e);
+        console.error("Error fetching extra data:", e);
       }
 
       setLoading(false);
@@ -245,8 +294,9 @@ function App() {
     return <Login onLoginSuccess={handleLoginSuccess} />;
   }
 
-  const handleOpenModal = (type) => {
+  const handleOpenModal = (type, initialData = null) => {
     setModalType(type);
+    setModalInitialData(initialData);
     setIsModalOpen(true);
   };
 
@@ -429,7 +479,8 @@ function App() {
               const bankName = bank.banco || "Sin Banco";
               const aportadoDesdeBanco = savingsByBank[bankName] || 0;
               const pendingReponer = pendingByBank[bankName] || 0;
-              const disponible = bank.saldo - aportadoDesdeBanco;
+              const presuPendiente = budgetByBank[bankName] || 0;
+              const disponible = bank.saldo - aportadoDesdeBanco - presuPendiente;
 
               return (
                 <div
@@ -481,9 +532,18 @@ function App() {
                                 {activeAccounts.map((acc, aIdx) => (
                                   <div key={aIdx} className="flex justify-between items-center text-xs bg-slate-900/40 p-1.5 rounded-md border border-slate-700/50">
                                     <span className="text-slate-400 truncate w-2/3" title={acc.cuenta}>{acc.cuenta}</span>
-                                    <span className={`font-medium ${acc.saldo < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
-                                      {formatPrivacy(acc.saldo, bankName)}
-                                    </span>
+                                    <div className="flex flex-col items-end">
+                                      <span className={`font-medium ${acc.saldo < 0 ? 'text-rose-400' : 'text-slate-300'}`}>
+                                        {formatPrivacy(acc.saldo, bankName)}
+                                      </span>
+                                      {((budgetByBankAcct[`${bankName}|${acc.cuenta}`] || 0) > 0 || (savingsByBankAcct[`${bankName}|${acc.cuenta}`] || 0) > 0) && (
+                                        <div className="flex flex-col items-end text-[9px] text-amber-400/80 leading-tight">
+                                          {(budgetByBankAcct[`${bankName}|${acc.cuenta}`] || 0) > 0 && <span>📋 p. {formatPrivacy(budgetByBankAcct[`${bankName}|${acc.cuenta}`], bankName)}</span>}
+                                          {(savingsByBankAcct[`${bankName}|${acc.cuenta}`] || 0) > 0 && <span>🐷 ah. {formatPrivacy(savingsByBankAcct[`${bankName}|${acc.cuenta}`], bankName)}</span>}
+                                          <span className="text-emerald-400/90 font-bold">disp. {formatPrivacy(acc.saldo - (budgetByBankAcct[`${bankName}|${acc.cuenta}`] || 0) - (savingsByBankAcct[`${bankName}|${acc.cuenta}`] || 0), bankName)}</span>
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                 ))}
                               </div>
@@ -499,25 +559,33 @@ function App() {
                       </div>
                     );
                   })()}
-                  {aportadoDesdeBanco > 0 && (
+                  {(aportadoDesdeBanco > 0 || presuPendiente > 0) && (
                     <div className="mt-2 pt-2 border-t border-slate-700/50">
-                      <div className="flex justify-between items-center text-xs">
-                        <span className="text-amber-400/70">🐷 Comprometido:</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-amber-300">{formatPrivacy(aportadoDesdeBanco, bankName)}</span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setMigratorSourceBank(bankName);
-                              setIsMigratorOpen(true);
-                            }}
-                            className="p-1 rounded-md hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-300 transition-all"
-                            title={`Migrar ahorros de ${bankName}`}
-                          >
-                            <ArrowRightLeft size={12} />
-                          </button>
+                      {aportadoDesdeBanco > 0 && (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-amber-400/70">🐷 Comprometido:</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-amber-300">{formatPrivacy(aportadoDesdeBanco, bankName)}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMigratorSourceBank(bankName);
+                                setIsMigratorOpen(true);
+                              }}
+                              className="p-1 rounded-md hover:bg-indigo-500/20 text-indigo-400/60 hover:text-indigo-300 transition-all"
+                              title={`Migrar ahorros de ${bankName}`}
+                            >
+                              <ArrowRightLeft size={12} />
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
+                      {presuPendiente > 0 && (
+                        <div className="flex justify-between items-center text-xs mt-1">
+                          <span className="text-indigo-400/70">📋 Presu. pendiente:</span>
+                          <span className="text-indigo-300">{formatPrivacy(presuPendiente, bankName)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-sm mt-1">
                         <span className="text-slate-400">Disponible:</span>
                         <span className={`font-bold ${disponible < 0 ? 'text-rose-400' : 'text-slate-200'}`}>{formatPrivacy(disponible, bankName)}</span>
@@ -567,56 +635,109 @@ function App() {
         {/* Main Content Grid */}
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-          {/* Left Column: Transactions */}
-          <div className="lg:col-span-2 bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl">
-            <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-              <ArrowRightLeft className="text-purple-400" /> Últimos Movimientos
-            </h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="text-slate-400 border-b border-slate-700/50 text-xs uppercase tracking-wider">
-                    <th className="pb-3 pl-2">Fecha</th>
-                    <th className="pb-3">Detalle</th>
-                    <th className="pb-3 hidden md:table-cell">Categoría</th>
-                    <th className="pb-3 text-right">Monto</th>
-                    <th className="pb-3 text-center pr-2">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {transactions.map((tx) => (
-                    <tr key={tx.id} className="border-b border-slate-700/30 hover:bg-slate-700/40 transition-colors group">
-                      <td className="py-3 pl-2 text-slate-300 font-mono text-xs">{tx.fecha}</td>
-                      <td className="py-3 font-medium text-slate-200 group-hover:text-white">
-                        {tx.detalle || "Sin detalle"}
-                        {tx.banco && (
-                          <div className="text-[10px] text-slate-500 font-normal mt-0.5 flex items-center gap-1">
-                            <Building2 size={10} /> {tx.banco} {tx.cuenta && tx.cuenta !== 'Principal' ? `(${tx.cuenta})` : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td className="py-3 text-slate-500 hidden md:table-cell">
-                        <span className="bg-slate-700/50 px-2 py-1 rounded text-xs">
-                          {tx.categoria}
-                        </span>
-                      </td>
-                      <td className={`py-3 text-right font-bold ${tx.ingreso > 0 ? 'text-emerald-400' : 'text-rose-400'
-                        }`}>
-                        {tx.ingreso > 0 ? `+ ${fmt(tx.ingreso)}` : `- ${fmt(tx.gasto)}`}
-                      </td>
-                      <td className="py-3 text-center pr-2">
-                        <button
-                          onClick={() => handleEditTransaction(tx)}
-                          className="text-slate-400 hover:text-blue-400 transition-colors p-1 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100"
-                          title="Editar"
-                        >
-                          <Pencil size={14} />
-                        </button>
-                      </td>
+          {/* Left Column: Transactions & Alerts */}
+          <div className="lg:col-span-2 space-y-6">
+
+            {/* Upcoming Projections Alert */}
+            {upcomingItems.length > 0 && (
+              <div className="bg-slate-800/60 p-6 rounded-2xl border border-amber-700/50 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-amber-400">
+                  <Clock size={20} /> Próximos Pagos Proyectados
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {upcomingItems.slice(0, 4).map((item, idx) => {
+                    const isPastDue = item.fecha_pago && item.fecha_pago < new Date().getDate();
+                    return (
+                      <div key={idx} className="bg-slate-900/60 p-3 rounded-xl border border-slate-700 flex justify-between items-center group relative overflow-hidden">
+                        <div>
+                          <p className="text-sm font-medium text-slate-200 truncate pr-2 max-w-[120px] sm:max-w-xs">{item.nombre}</p>
+                          <p className="text-[10px] text-slate-500 truncate">{item.category}</p>
+                        </div>
+                        <div className="text-right flex flex-col items-end group-hover:opacity-10 transition-opacity">
+                          <p className="text-sm font-bold text-slate-300">{fmt(item.amount)}</p>
+                          {item.fecha_pago && (
+                            <p className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded flex items-center gap-1 mt-1 ${isPastDue ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700 text-slate-400'}`}>
+                              Día {item.fecha_pago} {isPastDue && '(Atrasado)'}
+                            </p>
+                          )}
+                        </div>
+                        <div className="absolute right-0 top-0 bottom-0 w-16 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity translate-x-4 group-hover:translate-x-0 bg-gradient-to-l from-slate-900 via-slate-900/80 to-transparent">
+                          <button
+                            onClick={() => handleOpenModal('Gasto', {
+                              categoria: item.category,
+                              detalle: item.nombre,
+                              banco: item.banco_designado || 'Efectivo',
+                              cuenta: item.cuenta_designada || '',
+                              monto: item.amount,
+                              budget_item_id: item.id
+                            })}
+                            className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white p-2 text-xs rounded-full transition-colors font-medium border border-emerald-500/50"
+                            title="Pagar ahora"
+                          >
+                            Pagar
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+                {upcomingItems.length > 4 && (
+                  <p className="text-xs text-slate-500 mt-3 text-center">Y {upcomingItems.length - 4} más... ve a Presupuestos para ver todo.</p>
+                )}
+              </div>
+            )}
+
+            <div className="bg-slate-800/50 p-6 rounded-2xl border border-slate-700 shadow-xl">
+              <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
+                <ArrowRightLeft className="text-purple-400" /> Últimos Movimientos
+              </h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-slate-400 border-b border-slate-700/50 text-xs uppercase tracking-wider">
+                      <th className="pb-3 pl-2">Fecha</th>
+                      <th className="pb-3">Detalle</th>
+                      <th className="pb-3 hidden md:table-cell">Categoría</th>
+                      <th className="pb-3 text-right">Monto</th>
+                      <th className="pb-3 text-center pr-2">Acciones</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="text-sm">
+                    {transactions.map((tx) => (
+                      <tr key={tx.id} className="border-b border-slate-700/30 hover:bg-slate-700/40 transition-colors group">
+                        <td className="py-3 pl-2 text-slate-300 font-mono text-xs">{tx.fecha}</td>
+                        <td className="py-3 font-medium text-slate-200 group-hover:text-white">
+                          {tx.detalle || "Sin detalle"}
+                          {tx.banco && (
+                            <div className="text-[10px] text-slate-500 font-normal mt-0.5 flex items-center gap-1">
+                              <Building2 size={10} /> {tx.banco} {tx.cuenta && tx.cuenta !== 'Principal' ? `(${tx.cuenta})` : ''}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3 text-slate-500 hidden md:table-cell">
+                          <span className="bg-slate-700/50 px-2 py-1 rounded text-xs">
+                            {tx.categoria}
+                          </span>
+                        </td>
+                        <td className={`py-3 text-right font-bold ${tx.ingreso > 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                          {tx.ingreso > 0 ? `+ ${fmt(tx.ingreso)}` : `- ${fmt(tx.gasto)}`}
+                        </td>
+                        <td className="py-3 text-center pr-2">
+                          <button
+                            onClick={() => handleEditTransaction(tx)}
+                            className="text-slate-400 hover:text-blue-400 transition-colors p-1 hover:bg-slate-700 rounded opacity-0 group-hover:opacity-100"
+                            title="Editar"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
@@ -690,22 +811,26 @@ function App() {
             </div>
 
           </div>
-        </section>
+        </section >
 
       </div >
 
-      {/* Modal */}
+      {/* Modal / QuickAdd */}
       < QuickAdd
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)
-        }
+        onClose={() => {
+          setIsModalOpen(false);
+          setModalInitialData(null);
+        }}
         onSave={handleSaveTransaction}
         type={modalType}
         environment={APP_ENV}
+        initialData={modalInitialData}
+        banksData={banks}
       />
 
       {/* Unified Control Center */}
-      <ControlCenterModal
+      < ControlCenterModal
         isOpen={isControlCenterOpen}
         onClose={() => {
           setIsControlCenterOpen(false);
@@ -715,6 +840,7 @@ function App() {
         setTimeZone={setTimeZone}
         token={token}
         onCategoryChange={() => fetchData()}
+        environment={APP_ENV}
       />
 
       {/* Advanced Reports Modal */}
@@ -733,6 +859,7 @@ function App() {
         onClose={() => setIsTransferOpen(false)}
         environment={APP_ENV}
         onTransferComplete={() => fetchData()}
+        banksData={banks}
       />
 
       {/* Savings Goals Modal */}
@@ -741,13 +868,17 @@ function App() {
         onClose={() => setIsSavingsOpen(false)}
         environment={APP_ENV}
         onGoalChange={() => fetchData()}
+        banksData={banks}
       />
 
       {/* Budget Manager Modal */}
       <BudgetManager
         isOpen={isBudgetOpen}
-        onClose={() => setIsBudgetOpen(false)}
+        onClose={() => { setIsBudgetOpen(false); fetchData(); }}
         environment={APP_ENV}
+        onAddTransaction={(data) => handleOpenModal('Gasto', data)}
+        savingsByBank={savingsByBank}
+        banksData={banks}
       />
 
       {/* Edit Transaction Modal */}
@@ -762,6 +893,7 @@ function App() {
         onUpdate={() => fetchData()}
         onDelete={handleRequestDelete}
         token={token}
+        banksData={banks}
       />
 
       {/* Bank Details Modal */}
@@ -786,6 +918,7 @@ function App() {
         environment={APP_ENV}
         sourceBank={migratorSourceBank}
         onComplete={() => fetchData()}
+        banksData={banks}
       />
     </div >
   );
