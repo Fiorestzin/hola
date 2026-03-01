@@ -167,17 +167,33 @@ def init_budgets_db():
         ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
     ]
     for col_name, col_type in migration_columns:
-        try:
-            cursor.execute(f"ALTER TABLE budgets ADD COLUMN {col_name} {col_type}")
-            print(f"Migration: Added column '{col_name}' to budgets")
-        except Exception:
-            pass  # Column already exists
+        if USE_POSTGRES:
+            try:
+                # Usar SAVEPOINT impide que el error (si la columna ya existe) aborte toda la transacción en Postgres
+                cursor.execute(f"SAVEPOINT sp_col_{col_name}")
+                cursor.execute(f"ALTER TABLE budgets ADD COLUMN {col_name} {col_type}")
+                cursor.execute(f"RELEASE SAVEPOINT sp_col_{col_name}")
+                print(f"Migration: Added column '{col_name}' to budgets")
+            except Exception:
+                cursor.execute(f"ROLLBACK TO SAVEPOINT sp_col_{col_name}")
+        else:
+            try:
+                cursor.execute(f"ALTER TABLE budgets ADD COLUMN {col_name} {col_type}")
+                print(f"Migration: Added column '{col_name}' to budgets")
+            except Exception:
+                pass  # Column already exists
 
     # Migrate old repetir_mensual data to frecuencia
     try:
+        if USE_POSTGRES:
+            cursor.execute("SAVEPOINT sp_rep_mensual")
         cursor.execute(sql_param("UPDATE budgets SET frecuencia = 'mensual' WHERE repetir_mensual = 1 AND (frecuencia IS NULL OR frecuencia = 'unavez')"))
+        if USE_POSTGRES:
+            cursor.execute("RELEASE SAVEPOINT sp_rep_mensual")
         print("Migration: Migrated repetir_mensual -> frecuencia")
     except Exception:
+        if USE_POSTGRES:
+            cursor.execute("ROLLBACK TO SAVEPOINT sp_rep_mensual")
         pass  # repetir_mensual column might not exist
     
     # Seed Categories if empty
