@@ -225,42 +225,81 @@ function App() {
         }
 
         // Fetch budgets to calculate upcoming items
-        const currentMonth = new Date().toISOString().slice(0, 7);
-        const budgetRes = await fetch(`${API_URL}/budgets?month=${currentMonth}&environment=${APP_ENV}`);
-        if (budgetRes.ok) {
-          const budgets = await budgetRes.json();
-          const items = [];
-          budgets.forEach(b => {
+        const todayForBudget = new Date();
+        const yr = todayForBudget.getFullYear();
+        const mo = todayForBudget.getMonth() + 1;
+        const currM = `${yr}-${String(mo).padStart(2, '0')}`;
+
+        let nextMo = mo + 1;
+        let nextYr = yr;
+        if (nextMo > 12) {
+          nextMo = 1;
+          nextYr++;
+        }
+        const nextM = `${nextYr}-${String(nextMo).padStart(2, '0')}`;
+
+        const [budgetRes1, budgetRes2] = await Promise.all([
+          fetch(`${API_URL}/budgets?month=${currM}&environment=${APP_ENV}`),
+          fetch(`${API_URL}/budgets?month=${nextM}&environment=${APP_ENV}`)
+        ]);
+
+        const items = [];
+
+        if (budgetRes1.ok) {
+          const budgets1 = await budgetRes1.json();
+          budgets1.forEach(b => {
             if (b.items && b.items.length > 0) {
               b.items.forEach(item => {
                 if (!item.pagado) {
-                  items.push({ ...item, category: b.category });
+                  items.push({ ...item, category: b.category, budgetMonth: currM });
                 }
               });
             }
           });
+        }
 
-          const todayDay = new Date().getDate();
-          items.sort((a, b) => {
-            const distA = a.fecha_pago ? a.fecha_pago - todayDay : 1000;
-            const distB = b.fecha_pago ? b.fecha_pago - todayDay : 1000;
-            return distA - distB;
-          });
-          setUpcomingItems(items);
-
-          // Calculate budget commitments per bank and per bank+account
-          const byBank = {};
-          const byBankAcct = {};
-          items.forEach(item => {
-            if (item.banco_designado) {
-              byBank[item.banco_designado] = (byBank[item.banco_designado] || 0) + (item.amount || 0);
-              const key = `${item.banco_designado}|${item.cuenta_designada || ''}`;
-              byBankAcct[key] = (byBankAcct[key] || 0) + (item.amount || 0);
+        if (budgetRes2.ok) {
+          const budgets2 = await budgetRes2.json();
+          budgets2.forEach(b => {
+            if (b.items && b.items.length > 0) {
+              b.items.forEach(item => {
+                if (!item.pagado) {
+                  items.push({ ...item, category: b.category, budgetMonth: nextM });
+                }
+              });
             }
           });
-          setBudgetByBank(byBank);
-          setBudgetByBankAcct(byBankAcct);
         }
+
+        const todayNoTime = new Date();
+        todayNoTime.setHours(0, 0, 0, 0);
+
+        items.forEach(item => {
+          if (item.fecha_pago && item.budgetMonth) {
+            const [yy, mm] = item.budgetMonth.split('-');
+            const itemDate = new Date(yy, mm - 1, item.fecha_pago);
+            item.daysDist = Math.ceil((itemDate - todayNoTime) / (1000 * 60 * 60 * 24));
+          } else {
+            item.daysDist = 1000;
+          }
+        });
+
+        // Solo mostrar los que no estén pagados y ordenarlos por cercanía
+        items.sort((a, b) => a.daysDist - b.daysDist);
+        setUpcomingItems(items.filter(i => i.daysDist < 60)); // Ocultar cosas muy lejanas del mes 2
+
+        // Calculate budget commitments per bank and per bank+account ONLY for Current Month
+        const byBank = {};
+        const byBankAcct = {};
+        items.forEach(item => {
+          if (item.budgetMonth === currM && item.banco_designado) {
+            byBank[item.banco_designado] = (byBank[item.banco_designado] || 0) + (item.amount || 0);
+            const key = `${item.banco_designado}|${item.cuenta_designada || ''}`;
+            byBankAcct[key] = (byBankAcct[key] || 0) + (item.amount || 0);
+          }
+        });
+        setBudgetByBank(byBank);
+        setBudgetByBankAcct(byBankAcct);
       } catch (e) {
         console.error("Error fetching extra data:", e);
       }
@@ -647,7 +686,13 @@ function App() {
                 </h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {upcomingItems.slice(0, 4).map((item, idx) => {
-                    const isPastDue = item.fecha_pago && item.fecha_pago < new Date().getDate();
+                    const isPastDue = item.daysDist != null && item.daysDist < 0;
+                    const isToday = item.daysDist === 0;
+                    let textDist = '';
+                    if (isPastDue) textDist = '(Atrasado)';
+                    else if (isToday) textDist = '(Hoy)';
+                    else if (item.daysDist <= 45) textDist = `(En ${item.daysDist} d.)`;
+
                     return (
                       <div key={idx} className="bg-slate-900/60 p-3 rounded-xl border border-slate-700 flex justify-between items-center group relative overflow-hidden">
                         <div>
@@ -657,8 +702,8 @@ function App() {
                         <div className="text-right flex flex-col items-end group-hover:opacity-10 transition-opacity">
                           <p className="text-sm font-bold text-slate-300">{fmt(item.amount)}</p>
                           {item.fecha_pago && (
-                            <p className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded flex items-center gap-1 mt-1 ${isPastDue ? 'bg-rose-500/10 text-rose-400' : 'bg-slate-700 text-slate-400'}`}>
-                              Día {item.fecha_pago} {isPastDue && '(Atrasado)'}
+                            <p className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded flex items-center gap-1 mt-1 ${isPastDue ? 'bg-rose-500/10 text-rose-400' : (isToday ? 'bg-amber-500/10 text-amber-400' : 'bg-slate-700 text-slate-400')}`}>
+                              Día {item.fecha_pago} {textDist}
                             </p>
                           )}
                         </div>
