@@ -26,6 +26,7 @@ function App() {
   const [upcomingItems, setUpcomingItems] = useState([]); // Array of pending budget items
   const [budgetByBank, setBudgetByBank] = useState({}); // {banco: monto_presupuestado_pendiente}
   const [budgetByBankAcct, setBudgetByBankAcct] = useState({}); // {"banco|cuenta": monto}
+  const [totalBudgetPending, setTotalBudgetPending] = useState(0); // Total presupuesto pendiente mes actual
 
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -300,6 +301,12 @@ function App() {
         });
         setBudgetByBank(byBank);
         setBudgetByBankAcct(byBankAcct);
+
+        // Calculate total budget pending for current month (all unpaid items, regardless of bank)
+        const totalBudgetCurrentMonth = items
+          .filter(item => item.budgetMonth === currM)
+          .reduce((acc, item) => acc + (item.amount || 0), 0);
+        setTotalBudgetPending(totalBudgetCurrentMonth);
       } catch (e) {
         console.error("Error fetching extra data:", e);
       }
@@ -427,7 +434,7 @@ function App() {
 
   const totalSaldo = banks.reduce((acc, b) => acc + (b.saldo || 0), 0);
   const totalAhorrado = savingsSummary?.total_ahorrado || 0;
-  const saldoDisponible = totalSaldo - totalAhorrado;
+  const saldoDisponible = totalSaldo - totalAhorrado - totalBudgetPending;
 
   // Prepare chart data (Last 20 transactions simplified)
   const chartData = [...transactions].slice(0, 20).reverse().map(t => ({
@@ -464,7 +471,7 @@ function App() {
                   {isPrivacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </div>
-              {totalAhorrado > 0 && (
+              {(totalAhorrado > 0 || totalBudgetPending > 0) && (
                 <div className="mt-1 flex flex-col items-end">
                   <span className="text-[10px] text-emerald-400/80 uppercase tracking-wider font-bold">Disponible Real</span>
                   <span className={`text-lg font-bold ${saldoDisponible >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
@@ -661,9 +668,9 @@ function App() {
                   </p>
                 </div>
                 <div className="mt-2 pt-2 border-t border-emerald-700/30">
-                  <p className="text-xs text-emerald-400/60">Disponible sin ahorros:</p>
+                  <p className="text-xs text-emerald-400/60">Disponible sin compromisos:</p>
                   <p className="text-sm font-semibold text-slate-300">
-                    {formatPrivacy(totalSaldo - savingsSummary.total_ahorrado)}
+                    {formatPrivacy(totalSaldo - savingsSummary.total_ahorrado - totalBudgetPending)}
                   </p>
                 </div>
               </div>
