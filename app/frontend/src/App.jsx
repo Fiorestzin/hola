@@ -722,7 +722,8 @@ function App() {
                               banco: item.banco_designado || 'Efectivo',
                               cuenta: item.cuenta_designada || '',
                               monto: item.amount,
-                              budget_item_id: item.id
+                              budget_item_id: item.id,
+                              budget_month: item.budgetMonth
                             })}
                             className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500 hover:text-white p-2 text-xs rounded-full transition-colors font-medium border border-emerald-500/50"
                             title="Pagar ahora"

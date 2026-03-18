@@ -827,6 +827,7 @@ class Transaction(BaseModel):
     monto: float
     environment: str = "PROD"  # TEST (demo) or PROD (real)
     budget_item_id: Optional[int] = None
+    budget_month: Optional[str] = None
 
 @app.post("/transaction")
 def create_transaction(tx: Transaction):
@@ -843,11 +844,11 @@ def create_transaction(tx: Transaction):
         gasto = monto_abs
         
     try:
-        print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}, budget_item={tx.budget_item_id}")
+        print(f"DEBUG INSERT: env={tx.environment}, {tx.fecha}, {tx.tipo}, {tx.categoria}, budget_item={tx.budget_item_id}, budget_month={tx.budget_month}")
         cursor.execute(sql_param('''
-            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment, budget_item_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, tx.cuenta, ingreso, gasto, monto_abs, tx.environment, tx.budget_item_id))
+            INSERT INTO transactions (fecha, tipo, categoria, detalle, banco, cuenta, ingreso, gasto, monto, environment, budget_item_id, budget_month)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''), (tx.fecha, tx.tipo, tx.categoria, tx.detalle, tx.banco, tx.cuenta, ingreso, gasto, monto_abs, tx.environment, tx.budget_item_id, tx.budget_month))
         
         conn.commit()
         
@@ -895,6 +896,7 @@ class TransactionUpdate(BaseModel):
     cuenta: str = None
     monto: float = None
     budget_item_id: Optional[int] = None
+    budget_month: Optional[str] = None
 
 @app.put("/transaction/{tx_id}")
 def update_transaction(tx_id: int, tx: TransactionUpdate):
@@ -951,6 +953,10 @@ def update_transaction(tx_id: int, tx: TransactionUpdate):
     if hasattr(tx, 'budget_item_id') and tx.budget_item_id is not None:
         updates.append("budget_item_id = ?")
         params.append(tx.budget_item_id)
+    
+    if hasattr(tx, 'budget_month') and tx.budget_month is not None:
+        updates.append("budget_month = ?")
+        params.append(tx.budget_month)
     
     if not updates:
         conn.close()
@@ -1077,6 +1083,11 @@ def init_db():
 
         try:
             cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS environment TEXT DEFAULT 'TEST'")
+        except:
+            pass
+            
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS budget_month TEXT DEFAULT NULL")
         except:
             pass
         
@@ -1358,6 +1369,11 @@ def init_db():
         # Migration: Add environment column to transactions if missing
         try:
             cursor.execute("ALTER TABLE transactions ADD COLUMN environment TEXT DEFAULT 'TEST'")
+        except:
+            pass  # Column already exists
+            
+        try:
+            cursor.execute("ALTER TABLE transactions ADD COLUMN budget_month TEXT DEFAULT NULL")
         except:
             pass  # Column already exists
         
@@ -2248,8 +2264,9 @@ def get_budgets(month: str, environment: str = "PROD"):
         # Sumar gastos reales del mes vinculados
         cursor.execute(sql_param("""
             SELECT SUM(gasto), COUNT(id) FROM transactions 
-            WHERE environment = ? AND budget_item_id = ? AND fecha LIKE ?
-        """), (environment, b['id'], f"{month}%"))
+            WHERE environment = ? AND budget_item_id = ? 
+              AND (budget_month = ? OR (budget_month IS NULL AND fecha LIKE ?))
+        """), (environment, b['id'], month, f"{month}%"))
         
         row = cursor.fetchone()
         spent = row[0] if row and row[0] else 0

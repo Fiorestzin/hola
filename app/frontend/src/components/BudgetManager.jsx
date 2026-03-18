@@ -780,7 +780,8 @@ export default function BudgetManager({ isOpen, onClose, environment, onAddTrans
                                                                                             banco: item.banco_designado || '',
                                                                                             cuenta: item.cuenta_designada || '',
                                                                                             monto: item.amount,
-                                                                                            budget_item_id: item.id
+                                                                                            budget_item_id: item.id,
+                                                                                            budget_month: selectedMonth
                                                                                         });
                                                                                         onClose();
                                                                                     }

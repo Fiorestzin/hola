@@ -14,7 +14,8 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
         detalle: '',
         banco: 'Efectivo', // Default
         cuenta: '',
-        budget_item_id: null
+        budget_item_id: null,
+        budget_month: null
     });
 
     useEffect(() => {
@@ -26,7 +27,8 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                 detalle: initialData.detalle || '',
                 banco: initialData.banco || 'Efectivo',
                 cuenta: initialData.cuenta || '',
-                budget_item_id: initialData.budget_item_id || null
+                budget_item_id: initialData.budget_item_id || null,
+                budget_month: initialData.budget_month || null
                 // We leave fecha as today by default, or could use initialData.fecha if we had one
             }));
         } else if (isOpen) {
@@ -38,7 +40,8 @@ export default function QuickAdd({ isOpen, onClose, onSave, type = 'Gasto', envi
                 detalle: '',
                 banco: 'Efectivo',
                 cuenta: '',
-                budget_item_id: null
+                budget_item_id: null,
+                budget_month: null
             });
             setIsNetMode(false);
             setNetAmount('');
